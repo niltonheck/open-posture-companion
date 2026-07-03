@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Open Posture Companion mark: spine curve + sensor dots + signal arcs.
+       Recreated as vector from the directional mockups (specs/assets). -->
+  <g transform="translate(-48 0)">
+    <g fill="none" stroke-linecap="round">
+      <!-- spine: gentle S in charcoal -->
+      <path d="M 498 330 C 408 405, 498 490, 458 572 C 428 634, 406 682, 428 726"
+            stroke="#202832" stroke-width="64"/>
+      <!-- signal arcs opening up-right, centered on the top sensor dot (590,480) -->
+      <path d="M 618.5 373.7 A 110 110 0 0 1 696.3 451.5" stroke="#F5A623" stroke-width="36"/>
+      <path d="M 640.5 291.7 A 195 195 0 0 1 778.3 429.5" stroke="#F5A623" stroke-width="36"/>
+    </g>
+    <!-- sensor dots along the spine -->
+    <g fill="#F5A623">
+      <circle cx="590" cy="480" r="32"/>
+      <circle cx="590" cy="565" r="32"/>
+      <circle cx="590" cy="650" r="32"/>
+      <circle cx="590" cy="735" r="32"/>
+    </g>
+  </g>
+</svg>

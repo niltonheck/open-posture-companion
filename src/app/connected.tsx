@@ -12,6 +12,7 @@ import { Type } from '@/constants/typography';
 import {
   dumpReadableCharacteristics,
   monitorAllNotifiables,
+  runVibrationStopSemanticsProbe,
 } from '@/device/devHarness';
 import type { PostureStatus } from '@/device/types';
 import { useDevice } from '@/hooks/useDevice';
@@ -94,6 +95,19 @@ export default function ConnectedScreen() {
     }
     monitorStopRef.current = await monitorAllNotifiables(device.id);
     setMonitorProbeOn(true);
+  };
+
+  const [vibrationProbeOn, setVibrationProbeOn] = useState(false);
+  const runVibrationProbe = async () => {
+    if (!device || vibrationProbeOn) {
+      return;
+    }
+    setVibrationProbeOn(true);
+    try {
+      await runVibrationStopSemanticsProbe(device.id);
+    } finally {
+      setVibrationProbeOn(false);
+    }
   };
 
   const handleTestVibration = async () => {
@@ -271,6 +285,18 @@ export default function ConnectedScreen() {
             variant="ghost"
             disabled={(!monitorProbeOn && actionsDisabled) || !device}
             onPress={() => void toggleMonitorProbe()}
+          />
+          <ActionButton
+            label={
+              vibrationProbeOn
+                ? 'Dev: vibration probe running… (~25s)'
+                : 'Dev: vibration stop-semantics probe'
+            }
+            accessibilityLabel="Run vibration stop semantics probe"
+            variant="ghost"
+            loading={vibrationProbeOn}
+            disabled={actionsDisabled || !device}
+            onPress={() => void runVibrationProbe()}
           />
         </>
       )}

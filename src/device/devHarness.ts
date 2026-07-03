@@ -3,7 +3,12 @@
  * probes). Log output only — no UI beyond dev-gated trigger buttons.
  */
 
-import { base64ToBytes, bytesToHex } from './encoding';
+import {
+  Characteristic,
+  Command,
+  SERVICE_BY_CHARACTERISTIC,
+} from './characteristics';
+import { base64ToBytes, bytesToBase64, bytesToHex } from './encoding';
 import { getBleManager, onAdapterStateChange, requestBlePermissions } from './manager';
 import { scanForDevices } from './scan';
 import type { DiscoveredDevice } from './types';
@@ -207,6 +212,107 @@ export async function monitorAllNotifiables(
     }
     console.log(`${TAG} --- monitor probe stopped ---`);
   };
+}
+
+/**
+ * Phase 5.4 probe (GAP-05): write a scripted sequence of values to the
+ * vibration characteristic (aad3) and let the wearer report what each
+ * feels like — pattern? intensity? plain on? Every test value is followed
+ * by an explicit motor-off and a rest gap, so the motor can never be left
+ * running and each sensation is separable. Writes use with-response, so a
+ * value the firmware REJECTS surfaces as a logged GATT error (also data).
+ * Scope note: aad3 is a documented, hardware-confirmed characteristic —
+ * this probes its value space, which ADR-006 permits (its ban is on
+ * undocumented/firmware characteristics).
+ *
+ * Hold or wear the device. Best run with training mode paused (press the
+ * physical button) or while upright, so the device's own slouch buzz can't
+ * blend into the readings.
+ */
+export async function runVibrationPatternProbe(deviceId: string): Promise<void> {
+  const manager = getBleManager();
+  const serviceUuid = SERVICE_BY_CHARACTERISTIC[Characteristic.vibration];
+  const ON_MS = 3_000;
+  const REST_MS = 2_000;
+  // Singles sweep the value space coarsely; the pairs test whether the
+  // firmware parses a second byte (duration? intensity? repeat count?).
+  const testValues: number[][] = [
+    [0x02], [0x03], [0x04], [0x05], [0x0a],
+    [0x10], [0x20], [0x40], [0x80], [0xff],
+    [0x01, 0x01], [0x01, 0x05], [0x01, 0xff],
+    [0x05, 0x05], [0xff, 0xff],
+  ];
+
+  const writeValue = async (bytes: number[]) => {
+    await manager.writeCharacteristicWithResponseForDevice(
+      deviceId,
+      serviceUuid,
+      Characteristic.vibration,
+      bytesToBase64(Uint8Array.from(bytes)),
+    );
+  };
+  const off = async () => {
+    try {
+      await writeValue([Command.off]);
+    } catch (error) {
+      console.log(`${TAG} motor-off write failed — POWER CYCLE THE DEVICE IF STILL BUZZING`, error);
+    }
+  };
+
+  console.log(`${TAG} --- vibration pattern probe: ${testValues.length} values, ~${Math.round(((ON_MS + REST_MS) * testValues.length) / 1000)}s ---`);
+  console.log(`${TAG} note per value: nothing / plain buzz / pulses / weaker / stronger`);
+  for (const [index, value] of testValues.entries()) {
+    const label = `[${index + 1}/${testValues.length}] aad3 ← ${bytesToHex(Uint8Array.from(value))}`;
+    console.log(`${TAG} ${label} — feel now…`);
+    try {
+      await writeValue(value);
+    } catch (error) {
+      console.log(`${TAG} ${label} REJECTED by firmware:`, error);
+    }
+    await delay(ON_MS);
+    await off();
+    await delay(REST_MS);
+  }
+  await off();
+  console.log(`${TAG} --- vibration probe done (motor off) ---`);
+}
+
+/**
+ * Phase 5.4 follow-up: are non-0x01 single bytes IGNORED or do they act
+ * as STOP? Starts the motor with 0x01, writes a probe value mid-buzz,
+ * and leaves 3s to observe whether the buzz survives it. Two rounds
+ * (0x05, 0xff), each ended with a real 0x00 stop.
+ */
+export async function runVibrationStopSemanticsProbe(deviceId: string): Promise<void> {
+  const manager = getBleManager();
+  const serviceUuid = SERVICE_BY_CHARACTERISTIC[Characteristic.vibration];
+  const writeValue = (byte: number) =>
+    manager.writeCharacteristicWithResponseForDevice(
+      deviceId,
+      serviceUuid,
+      Characteristic.vibration,
+      bytesToBase64(Uint8Array.of(byte)),
+    );
+  console.log(`${TAG} --- vibration stop-semantics probe ---`);
+  for (const probeByte of [0x05, 0xff]) {
+    try {
+      console.log(`${TAG} motor ON (0x01)…`);
+      await writeValue(Command.on);
+      await delay(2_000);
+      console.log(
+        `${TAG} writing 0x${probeByte.toString(16).padStart(2, '0')} mid-buzz — DID IT STOP OR KEEP BUZZING?`,
+      );
+      await writeValue(probeByte);
+      await delay(3_000);
+    } finally {
+      console.log(`${TAG} motor OFF (0x00)`);
+      await writeValue(Command.off).catch((error) =>
+        console.log(`${TAG} off write failed — power cycle if still buzzing`, error),
+      );
+    }
+    await delay(1_500);
+  }
+  console.log(`${TAG} --- stop-semantics probe done ---`);
 }
 
 /** Run one hardware probe; a failure is logged but never aborts the session. */

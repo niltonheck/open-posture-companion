@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton } from '@/components/action-button';
@@ -7,12 +7,16 @@ import { Card } from '@/components/card';
 import { Disclaimer } from '@/components/disclaimer';
 import { Layout, Palette } from '@/constants/palette';
 import { Type } from '@/constants/typography';
-// Dev-only probe trigger (Phase 5.6) — sanctioned harness exception to the
+// Dev-only probe triggers (Phase 5) — sanctioned harness exception to the
 // screens-use-hooks-only rule, like the Phase 1 harness before it.
-import { dumpReadableCharacteristics } from '@/device/devHarness';
+import {
+  dumpReadableCharacteristics,
+  monitorAllNotifiables,
+} from '@/device/devHarness';
 import type { PostureStatus } from '@/device/types';
 import { useDevice } from '@/hooks/useDevice';
 import { usePosture } from '@/hooks/usePosture';
+import { useVitals } from '@/hooks/useVitals';
 
 const POSTURE_LINE: Record<PostureStatus, { label: string; color: string }> = {
   upright: { label: 'Upright', color: Palette.successGreen },
@@ -29,6 +33,7 @@ export default function ConnectedScreen() {
   const router = useRouter();
   const { device, connectionState, bluetoothOff, disconnect } = useDevice();
   const posture = usePosture();
+  const vitals = useVitals();
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [lastAction, setLastAction] = useState<{
     ok: boolean;
@@ -64,6 +69,32 @@ export default function ConnectedScreen() {
       return () => subscription.remove();
     }, []),
   );
+
+  // Dev-only monitor probe lifecycle; stopped on unmount so subscriptions
+  // never outlive the screen (the link teardown would kill them anyway,
+  // but a deliberate stop keeps the log readable).
+  const monitorStopRef = useRef<(() => void) | null>(null);
+  const [monitorProbeOn, setMonitorProbeOn] = useState(false);
+  useEffect(
+    () => () => {
+      monitorStopRef.current?.();
+      monitorStopRef.current = null;
+    },
+    [],
+  );
+  const toggleMonitorProbe = async () => {
+    if (monitorStopRef.current) {
+      monitorStopRef.current();
+      monitorStopRef.current = null;
+      setMonitorProbeOn(false);
+      return;
+    }
+    if (!device) {
+      return;
+    }
+    monitorStopRef.current = await monitorAllNotifiables(device.id);
+    setMonitorProbeOn(true);
+  };
 
   const handleTestVibration = async () => {
     if (!device) {
@@ -139,11 +170,34 @@ export default function ConnectedScreen() {
             accessibilityLiveRegion="polite"
           >
             <Text style={Type.body}>Posture: </Text>
-            <Text
-              style={[Type.body, styles.postureValue, { color: postureLine.color }]}
-            >
-              {postureLine.label}
-            </Text>
+            {vitals.worn === false ? (
+              // A dangling device still streams tilt; never present that
+              // as the wearer's posture.
+              <Text style={[Type.body, styles.postureValue]}>
+                Device not worn
+              </Text>
+            ) : (
+              <Text
+                style={[Type.body, styles.postureValue, { color: postureLine.color }]}
+              >
+                {postureLine.label}
+              </Text>
+            )}
+          </View>
+        )}
+        {!reconnecting && (vitals.batteryPercent !== null || vitals.paused) && (
+          <View style={styles.vitalsRow} accessible>
+            {vitals.batteryPercent !== null && (
+              <Text style={Type.caption}>
+                Battery: about {vitals.batteryPercent}%
+                {vitals.charging ? ' · Charging' : ''}
+              </Text>
+            )}
+            {vitals.paused && (
+              <Text style={Type.caption}>
+                Reminders paused · Press the device button to resume
+              </Text>
+            )}
           </View>
         )}
       </Card>
@@ -195,17 +249,30 @@ export default function ConnectedScreen() {
       )}
 
       {__DEV__ && (
-        <ActionButton
-          label="Dev: read probe (log snapshot)"
-          accessibilityLabel="Log readable characteristics snapshot"
-          variant="ghost"
-          disabled={actionsDisabled || !device}
-          onPress={() => {
-            if (device) {
-              void dumpReadableCharacteristics(device.id);
+        <>
+          <ActionButton
+            label="Dev: read probe (log snapshot)"
+            accessibilityLabel="Log readable characteristics snapshot"
+            variant="ghost"
+            disabled={actionsDisabled || !device}
+            onPress={() => {
+              if (device) {
+                void dumpReadableCharacteristics(device.id);
+              }
+            }}
+          />
+          <ActionButton
+            label={
+              monitorProbeOn
+                ? 'Dev: stop monitor probe'
+                : 'Dev: monitor probe (log all notifies)'
             }
-          }}
-        />
+            accessibilityLabel="Toggle notify monitor probe"
+            variant="ghost"
+            disabled={(!monitorProbeOn && actionsDisabled) || !device}
+            onPress={() => void toggleMonitorProbe()}
+          />
+        </>
       )}
 
       <View style={styles.footer}>
@@ -246,6 +313,10 @@ const styles = StyleSheet.create({
   },
   reconnectingHint: {
     marginTop: 8,
+  },
+  vitalsRow: {
+    marginTop: 8,
+    gap: 2,
   },
   calloutCard: {
     backgroundColor: Palette.softAmber,

@@ -66,4 +66,18 @@ export interface DiscoveredDevice {
   signal: SignalStrength;
 }
 
+/**
+ * Live device health/state, decoded from the aaa2/aac3/aac7/aad2 notify
+ * characteristics (docs/protocol.html, 2026-07-03). Fields are null until
+ * the first reading arrives and while disconnected.
+ */
+export interface DeviceVitals {
+  /** 0–100, derived from battery millivolts via a LiPo discharge curve. */
+  batteryPercent: number | null;
+  charging: boolean | null;
+  worn: boolean | null;
+  /** Button-toggled pause: device senses but does not vibrate. */
+  paused: boolean | null;
+}
+
 export type Unsubscribe = () => void;

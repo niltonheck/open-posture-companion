@@ -31,8 +31,21 @@ export const Characteristic = {
    * reads calibrated. Note: opposite endianness from the aaca stream.
    */
   calibrationRecord: fullUUID('aab3'),
+  /** Notify/Read: charger connected, 0x01/0x00. Decoded 2026-07-03. */
+  charging: fullUUID('aaa2'),
+  /**
+   * Notify/Read: worn sensor, 0x01 worn / 0x00 not worn. Bounces briefly
+   * while being taken off. Decoded 2026-07-03.
+   */
+  worn: fullUUID('aac3'),
   /** Notify/Read: physical button, toggles 0x01/0x00 on each press. */
   button: fullUUID('aac6'),
+  /**
+   * Notify/Read/Write: training pause mode, toggled by the physical button
+   * (0x01 paused = sensing but no vibration). Decoded 2026-07-03. WRITE IS
+   * UNTESTED — do not write until verified on hardware (Phase 5.7).
+   */
+  pauseMode: fullUUID('aac7'),
   /**
    * Notify/Read: continuous uint16 LE forward-tilt stream in tenths of a
    * degree, NOT the discrete status byte the original docs claimed (GAP-02).
@@ -42,6 +55,11 @@ export const Characteristic = {
    * likely belongs to another notify characteristic (aac4/aac9 — 5.2).
    */
   posture: fullUUID('aaca'),
+  /**
+   * Notify/Read: battery voltage, uint16 LE millivolts (~60 s cadence;
+   * jumps upward when the charger connects). GAP-06 resolved 2026-07-03.
+   */
+  batteryVoltage: fullUUID('aad2'),
   /** Write: vibration motor, 0x01 start / 0x00 stop. Hardware-confirmed. */
   vibration: fullUUID('aad3'),
   /** Write: red LED, 0x01 on / 0x00 off. Hardware-confirmed. */
@@ -73,8 +91,12 @@ export const SERVICE_BY_CHARACTERISTIC: Readonly<Record<string, string>> = {
   [Characteristic.calibrate]: Service.aab0,
   [Characteristic.calibrationState]: Service.aab0,
   [Characteristic.calibrationRecord]: Service.aab0,
+  [Characteristic.charging]: Service.aaa0,
+  [Characteristic.worn]: Service.aac0,
   [Characteristic.button]: Service.aac0,
+  [Characteristic.pauseMode]: Service.aac0,
   [Characteristic.posture]: Service.aac0,
+  [Characteristic.batteryVoltage]: Service.aad0,
   [Characteristic.vibration]: Service.aad0,
   [Characteristic.ledRed]: Service.aad0,
   [Characteristic.ledGreen]: Service.aad0,

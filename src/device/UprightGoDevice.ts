@@ -17,7 +17,12 @@ import {
   SERVICE_BY_CHARACTERISTIC,
 } from './characteristics';
 import { base64ToBytes, bytesToBase64, bytesToHex } from './encoding';
-import type { DeviceConnectionState, PostureStatus, Unsubscribe } from './types';
+import type {
+  DeviceConnectionState,
+  DeviceVitals,
+  PostureStatus,
+  Unsubscribe,
+} from './types';
 
 /** The slice of BleManager the device layer uses; mockable per ADR-002. */
 export type BleTransport = Pick<
@@ -71,6 +76,46 @@ const RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000];
 const TILT_MONITOR_MAX_RESTARTS = 2;
 const TILT_MONITOR_RESTART_DELAY_MS = 1_000;
 
+/**
+ * LiPo open-circuit voltage → remaining-charge curve (single 4.2 V cell,
+ * which the observed aad2 range matches: ~4120 mV on charger, ~3600 mV
+ * low). Piecewise-linear between well-known LiPo rest points; coarse by
+ * nature — the UI should present it as an estimate, not a gauge.
+ */
+const BATTERY_CURVE_MV_TO_PERCENT: readonly (readonly [number, number])[] = [
+  [4150, 100],
+  [4050, 90],
+  [3950, 75],
+  [3850, 55],
+  [3750, 35],
+  [3650, 15],
+  [3550, 5],
+  [3450, 0],
+];
+
+const EMPTY_VITALS: DeviceVitals = {
+  batteryPercent: null,
+  charging: null,
+  worn: null,
+  paused: null,
+};
+
+export function batteryPercentFromMillivolts(millivolts: number): number {
+  const curve = BATTERY_CURVE_MV_TO_PERCENT;
+  if (millivolts >= curve[0][0]) {
+    return 100;
+  }
+  for (let i = 1; i < curve.length; i += 1) {
+    const [highMv, highPct] = curve[i - 1];
+    const [lowMv, lowPct] = curve[i];
+    if (millivolts >= lowMv) {
+      const ratio = (millivolts - lowMv) / (highMv - lowMv);
+      return Math.round(lowPct + ratio * (highPct - lowPct));
+    }
+  }
+  return 0;
+}
+
 export class UprightGoDevice {
   private state: DeviceConnectionState = 'idle';
   private readonly stateListeners = new Set<
@@ -103,6 +148,8 @@ export class UprightGoDevice {
   private motorOn = false;
   private readonly postureListeners = new Set<(status: PostureStatus) => void>();
   private lastEmittedPosture: PostureStatus | null = null;
+  private vitals: DeviceVitals = EMPTY_VITALS;
+  private readonly vitalsListeners = new Set<(vitals: DeviceVitals) => void>();
   /** Latest aaca reading; null while disconnected. */
   private lastTiltDecidegrees: number | null = null;
   /**
@@ -222,10 +269,12 @@ export class UprightGoDevice {
     this.gattReady = true;
     this.tiltMonitorRestarts = 0;
     this.startTiltMonitor();
-    // Fire-and-forget so two extra GATT reads never delay 'connected':
-    // if the device is already calibrated (aab2), adopt its stored
-    // baseline (aab3) — the status line works without recalibrating.
+    this.startVitalsMonitors();
+    // Fire-and-forget so the extra GATT reads never delay 'connected':
+    // adopt the stored calibration (aab2/aab3) and prime the vitals with
+    // initial reads (their notifies only fire on change).
     void this.adoptDeviceCalibration(epoch);
+    void this.primeVitals(epoch);
     if (this.motorOn) {
       // Best-effort: silence a motor stranded by a drop mid-pulse. On
       // failure the flag stays set and the next link retries.
@@ -527,6 +576,67 @@ export class UprightGoDevice {
     }
   }
 
+  /**
+   * Live device vitals (battery, charging, worn, paused) from the notify
+   * characteristics decoded 2026-07-03. Emits the current value
+   * immediately, then on every change; all-null while disconnected or
+   * before the first readings land. Listeners survive reconnects.
+   */
+  onVitalsChange(callback: (vitals: DeviceVitals) => void): Unsubscribe {
+    this.vitalsListeners.add(callback);
+    callback(this.vitals);
+    return () => this.vitalsListeners.delete(callback);
+  }
+
+  private setVitals(partial: Partial<DeviceVitals>): void {
+    this.vitals = { ...this.vitals, ...partial };
+    for (const listener of this.vitalsListeners) {
+      listener(this.vitals);
+    }
+  }
+
+  /** Started per connection, like the tilt monitor. */
+  private startVitalsMonitors(): void {
+    this.monitor(Characteristic.batteryVoltage, (bytes) =>
+      this.setVitals(decodeBattery(bytes)),
+    );
+    this.monitor(Characteristic.charging, (bytes) =>
+      this.setVitals({ charging: bytes[0] === Command.on }),
+    );
+    this.monitor(Characteristic.worn, (bytes) =>
+      this.setVitals({ worn: bytes[0] === Command.on }),
+    );
+    this.monitor(Characteristic.pauseMode, (bytes) =>
+      this.setVitals({ paused: bytes[0] === Command.on }),
+    );
+  }
+
+  /** Initial values — the notifies above only fire on change. */
+  private async primeVitals(epoch: number): Promise<void> {
+    const initialReads: [string, (bytes: Uint8Array) => Partial<DeviceVitals>][] = [
+      [Characteristic.batteryVoltage, decodeBattery],
+      [Characteristic.charging, (bytes) => ({ charging: bytes[0] === Command.on })],
+      [Characteristic.worn, (bytes) => ({ worn: bytes[0] === Command.on })],
+      [Characteristic.pauseMode, (bytes) => ({ paused: bytes[0] === Command.on })],
+    ];
+    for (const [characteristic, decode] of initialReads) {
+      try {
+        const bytes = await this.read(characteristic);
+        this.assertCurrent(epoch);
+        if (bytes.length > 0) {
+          this.setVitals(decode(bytes));
+        }
+      } catch (error) {
+        // A failed priming read just leaves that field null until its
+        // notify fires; never abort the remaining reads for it.
+        if (epoch !== this.linkEpoch) {
+          return;
+        }
+        console.log(`${TAG} vitals priming read failed:`, error);
+      }
+    }
+  }
+
   private postureStatus(): PostureStatus {
     if (
       this.lastTiltDecidegrees === null ||
@@ -684,5 +794,15 @@ export class UprightGoDevice {
     // No live tilt while disconnected; posture listeners hear 'unknown'.
     this.lastTiltDecidegrees = null;
     this.emitPosture();
+    // Same for vitals — stale battery/worn readings must not present as live.
+    this.setVitals(EMPTY_VITALS);
   }
+}
+
+function decodeBattery(bytes: Uint8Array): Partial<DeviceVitals> {
+  if (bytes.length < 2) {
+    return {};
+  }
+  const millivolts = bytes[0] | (bytes[1] << 8);
+  return { batteryPercent: batteryPercentFromMillivolts(millivolts) };
 }

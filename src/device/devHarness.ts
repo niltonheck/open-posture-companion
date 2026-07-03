@@ -145,6 +145,70 @@ function shortUUID(uuid: string): string {
   return uuid.slice(4, 8).toLowerCase();
 }
 
+/**
+ * Phase 5.2/GAP-06 probe: subscribe to EVERY notify/indicate characteristic
+ * and log timestamped events. Run during a full wear session (upright →
+ * slouch past the buzz → straighten → remove → button press → charger on/
+ * off) to catalog which characteristics actually emit and when.
+ * Prime suspects: aac4/aac9 (unknown notifies), aad2 (battery-voltage-like
+ * reads: LE uint16 looks like millivolts), aac3 (worn flag?), aab2
+ * (calibration flag, indicate). aaca is skipped — the device layer already
+ * logs it. Subscriptions only; nothing is written (ADR-006 safe).
+ */
+export async function monitorAllNotifiables(
+  deviceId: string,
+): Promise<() => void> {
+  const manager = getBleManager();
+  const KNOWN_SPAMMY = new Set(['aaca']);
+  const subscriptions: { remove: () => void }[] = [];
+  const startedAt = Date.now();
+  const stamp = () => `+${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+  console.log(`${TAG} --- monitoring all notify/indicate characteristics ---`);
+  const services = await manager.servicesForDevice(deviceId);
+  for (const service of services) {
+    const characteristics = await manager.characteristicsForDevice(
+      deviceId,
+      service.uuid,
+    );
+    for (const characteristic of characteristics) {
+      const short = shortUUID(characteristic.uuid);
+      if (
+        (!characteristic.isNotifiable && !characteristic.isIndicatable) ||
+        KNOWN_SPAMMY.has(short)
+      ) {
+        continue;
+      }
+      const label = `${shortUUID(service.uuid)}/${short}`;
+      subscriptions.push(
+        manager.monitorCharacteristicForDevice(
+          deviceId,
+          service.uuid,
+          characteristic.uuid,
+          (error, notified) => {
+            if (error) {
+              console.log(`${TAG} ${stamp()} ${label} monitor ended: ${error.message}`);
+              return;
+            }
+            if (notified?.value) {
+              console.log(
+                `${TAG} ${stamp()} ${label} → ${bytesToHex(base64ToBytes(notified.value))}`,
+              );
+            }
+          },
+        ),
+      );
+      console.log(`${TAG} subscribed ${label}`);
+    }
+  }
+  console.log(`${TAG} monitoring ${subscriptions.length} characteristics — go use the device`);
+  return () => {
+    for (const subscription of subscriptions) {
+      subscription.remove();
+    }
+    console.log(`${TAG} --- monitor probe stopped ---`);
+  };
+}
+
 /** Run one hardware probe; a failure is logged but never aborts the session. */
 async function step(label: string, action: () => Promise<void>): Promise<void> {
   console.log(`${TAG} ${label}`);

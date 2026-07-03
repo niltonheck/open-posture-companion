@@ -12,7 +12,6 @@ import { Type } from '@/constants/typography';
 import {
   dumpReadableCharacteristics,
   monitorAllNotifiables,
-  runVibrationStopSemanticsProbe,
 } from '@/device/devHarness';
 import type { PostureStatus } from '@/device/types';
 import { useDevice } from '@/hooks/useDevice';
@@ -28,7 +27,7 @@ const POSTURE_LINE: Record<PostureStatus, { label: string; color: string }> = {
   },
 };
 
-type PendingAction = 'vibration' | 'disconnect' | null;
+type PendingAction = 'vibration' | 'pause' | 'disconnect' | null;
 
 export default function ConnectedScreen() {
   const router = useRouter();
@@ -97,16 +96,25 @@ export default function ConnectedScreen() {
     setMonitorProbeOn(true);
   };
 
-  const [vibrationProbeOn, setVibrationProbeOn] = useState(false);
-  const runVibrationProbe = async () => {
-    if (!device || vibrationProbeOn) {
+  const handleTogglePause = async () => {
+    if (!device) {
       return;
     }
-    setVibrationProbeOn(true);
+    const target = !vitals.paused;
+    setPendingAction('pause');
     try {
-      await runVibrationStopSemanticsProbe(device.id);
+      await device.setPaused(target);
+      setLastAction({
+        ok: true,
+        text: target ? 'Reminders paused' : 'Reminders resumed',
+      });
+    } catch {
+      setLastAction({
+        ok: false,
+        text: 'Couldn’t update reminders. Try again.',
+      });
     } finally {
-      setVibrationProbeOn(false);
+      setPendingAction(null);
     }
   };
 
@@ -209,7 +217,7 @@ export default function ConnectedScreen() {
             )}
             {vitals.paused && (
               <Text style={Type.caption}>
-                Reminders paused · Press the device button to resume
+                Reminders paused — the device senses but won’t vibrate
               </Text>
             )}
           </View>
@@ -249,6 +257,22 @@ export default function ConnectedScreen() {
         disabled={actionsDisabled}
         onPress={() => void handleTestVibration()}
       />
+      <ActionButton
+        label={
+          pendingAction === 'pause'
+            ? 'Updating…'
+            : vitals.paused
+              ? 'Resume reminders'
+              : 'Pause reminders'
+        }
+        accessibilityLabel={
+          vitals.paused ? 'Resume posture reminders' : 'Pause posture reminders'
+        }
+        variant="outline"
+        loading={pendingAction === 'pause'}
+        disabled={actionsDisabled}
+        onPress={() => void handleTogglePause()}
+      />
 
       {lastAction && (
         <Card>
@@ -285,18 +309,6 @@ export default function ConnectedScreen() {
             variant="ghost"
             disabled={(!monitorProbeOn && actionsDisabled) || !device}
             onPress={() => void toggleMonitorProbe()}
-          />
-          <ActionButton
-            label={
-              vibrationProbeOn
-                ? 'Dev: vibration probe running… (~25s)'
-                : 'Dev: vibration stop-semantics probe'
-            }
-            accessibilityLabel="Run vibration stop semantics probe"
-            variant="ghost"
-            loading={vibrationProbeOn}
-            disabled={actionsDisabled || !device}
-            onPress={() => void runVibrationProbe()}
           />
         </>
       )}

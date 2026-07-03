@@ -41,9 +41,11 @@ export const Characteristic = {
   /** Notify/Read: physical button, toggles 0x01/0x00 on each press. */
   button: fullUUID('aac6'),
   /**
-   * Notify/Read/Write: training pause mode, toggled by the physical button
-   * (0x01 paused = sensing but no vibration). Decoded 2026-07-03. WRITE IS
-   * UNTESTED — do not write until verified on hardware (Phase 5.7).
+   * Notify/Read/Write: training pause mode (0x01 paused = sensing but no
+   * vibration), toggled by the physical button OR by writing (write
+   * verified on hardware 2026-07-03, Phase 5.7). Caveat: the firmware
+   * notifies on button toggles but NOT back to the writer — after a
+   * write, reflect the state locally instead of waiting for a notify.
    */
   pauseMode: fullUUID('aac7'),
   /**

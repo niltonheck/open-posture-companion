@@ -315,6 +315,74 @@ export async function runVibrationStopSemanticsProbe(deviceId: string): Promise<
   console.log(`${TAG} --- stop-semantics probe done ---`);
 }
 
+/**
+ * Phase 5.7 probe: can the app toggle pause mode by writing aac7?
+ * Three escalating steps, each user-gated (observe before advancing):
+ *   1 — NULL WRITE: read aac7, write back the exact value it already
+ *       holds. Tests "is writing this characteristic safe" with zero
+ *       intended state change.
+ *   2 — write 0x01 (pause). Expected if it works: aac7 notify fires →
+ *       the app's "Reminders paused" hint appears; slouching stops
+ *       triggering the buzz — identical to a physical button press.
+ *   3 — write 0x00 (resume). Hint disappears, buzz behavior returns.
+ * Values written are strictly the two the firmware itself emits for this
+ * flag (observed via button presses). Every step reads back and logs.
+ */
+export async function runPauseWriteStep(
+  deviceId: string,
+  step: 1 | 2 | 3,
+): Promise<void> {
+  const manager = getBleManager();
+  const serviceUuid = SERVICE_BY_CHARACTERISTIC[Characteristic.pauseMode];
+  const readBack = async (label: string) => {
+    const characteristic = await manager.readCharacteristicForDevice(
+      deviceId,
+      serviceUuid,
+      Characteristic.pauseMode,
+    );
+    const bytes = characteristic.value
+      ? base64ToBytes(characteristic.value)
+      : Uint8Array.of();
+    console.log(`${TAG} aac7 ${label}: ${bytesToHex(bytes)}`);
+    return bytes;
+  };
+  const writeValue = (byte: number) =>
+    manager.writeCharacteristicWithResponseForDevice(
+      deviceId,
+      serviceUuid,
+      Characteristic.pauseMode,
+      bytesToBase64(Uint8Array.of(byte)),
+    );
+
+  console.log(`${TAG} --- pause-write probe, step ${step}/3 ---`);
+  try {
+    const before = await readBack('before');
+    if (step === 1) {
+      if (before.length === 0) {
+        console.log(`${TAG} empty read — aborting null write`);
+        return;
+      }
+      console.log(`${TAG} null write: writing back 0x${before[0].toString(16).padStart(2, '0')}…`);
+      await writeValue(before[0]);
+    } else {
+      const target = step === 2 ? Command.on : Command.off;
+      console.log(`${TAG} writing 0x0${target} (${step === 2 ? 'pause' : 'resume'})…`);
+      await writeValue(target);
+    }
+    console.log(`${TAG} write ACCEPTED`);
+    await readBack('after');
+    console.log(
+      step === 1
+        ? `${TAG} step 1 done — confirm the device still behaves (test vibration, tilt logs), then run step 2`
+        : step === 2
+          ? `${TAG} step 2 done — check for the "Reminders paused" hint and confirm slouching does NOT buzz, then run step 3`
+          : `${TAG} step 3 done — hint should be gone and slouch buzz back to normal`,
+    );
+  } catch (error) {
+    console.log(`${TAG} step ${step} write REJECTED/failed:`, error);
+  }
+}
+
 /** Run one hardware probe; a failure is logged but never aborts the session. */
 async function step(label: string, action: () => Promise<void>): Promise<void> {
   console.log(`${TAG} ${label}`);

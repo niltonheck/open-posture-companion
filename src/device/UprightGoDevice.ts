@@ -465,6 +465,17 @@ export class UprightGoDevice {
     }
   }
 
+  /**
+   * Pause/resume the device's slouch-vibration reminders — same effect as
+   * a physical button press (aac7, write verified 2026-07-03). The device
+   * keeps sensing while paused. The firmware does not notify the writer,
+   * so the confirmed state is reflected into vitals locally.
+   */
+  async setPaused(on: boolean): Promise<void> {
+    await this.write(Characteristic.pauseMode, on ? Command.on : Command.off);
+    this.setVitals({ paused: on });
+  }
+
   /** The green LED blinks while on (firmware pattern); red is steady. */
   async setLED(color: 'red' | 'green', on: boolean): Promise<void> {
     const characteristic =

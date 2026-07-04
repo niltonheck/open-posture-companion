@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Vibration glyph: center dot with radiating arcs, (( • )).
+     Original artwork in the brand stroke style (specs/design_decisions.md). -->
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="12" cy="12" r="3.1" fill="#F5A623"/>
+  <g stroke="#F5A623" stroke-width="2" stroke-linecap="round" fill="none">
+    <path d="M7 8.6 a6.2 6.2 0 0 0 0 6.8"/>
+    <path d="M17 8.6 a6.2 6.2 0 0 1 0 6.8"/>
+    <path d="M3.1 5.8 a11 11 0 0 0 0 12.4"/>
+    <path d="M20.9 5.8 a11 11 0 0 1 0 12.4"/>
+  </g>
+</svg>

@@ -152,6 +152,7 @@ export class UprightGoDevice {
   private readonly vitalsListeners = new Set<(vitals: DeviceVitals) => void>();
   /** Latest aaca reading; null while disconnected. */
   private lastTiltDecidegrees: number | null = null;
+  private readonly tiltListeners = new Set<(decidegrees: number | null) => void>();
   /**
    * Tilt captured when calibrate() acked. The aaca stream is absolute
    * (calibration does not re-baseline it), so the reference stays valid
@@ -516,20 +517,20 @@ export class UprightGoDevice {
         if (__DEV__) {
           console.log(`${TAG} aaca payload: ${bytesToHex(bytes)} (tilt=${tilt})`);
         }
-        this.lastTiltDecidegrees = tilt;
-        this.emitPosture();
+        this.setTilt(tilt);
       },
       () => {
+        // A monitor from a previous link (torn down while its error
+        // callback was still queued on the bridge) must not null the new
+        // link's live tilt or restart into it — teardown() already reset
+        // the old link's state when the epoch moved.
+        if (epoch !== this.linkEpoch) {
+          return;
+        }
         // The stream can die without a link drop (transient GATT error) —
         // never keep reporting a frozen tilt as live posture.
-        this.lastTiltDecidegrees = null;
-        this.emitPosture();
-        // A monitor from a previous link (torn down while its error
-        // callback was still queued on the bridge) must not restart into
-        // the new link — it would duplicate the new link's own monitor.
-        if (epoch === this.linkEpoch) {
-          this.maybeRestartTiltMonitor();
-        }
+        this.setTilt(null);
+        this.maybeRestartTiltMonitor();
       },
     );
   }
@@ -646,6 +647,30 @@ export class UprightGoDevice {
         console.log(`${TAG} vitals priming read failed:`, error);
       }
     }
+  }
+
+  /**
+   * Live forward-tilt angle in tenths of a degree; null while disconnected
+   * or before the first reading. Emits the current value immediately, then
+   * on change; listeners survive reconnects. Stream semantics are
+   * documented on onPostureChange above.
+   */
+  onTiltChange(callback: (decidegrees: number | null) => void): Unsubscribe {
+    this.tiltListeners.add(callback);
+    callback(this.lastTiltDecidegrees);
+    return () => this.tiltListeners.delete(callback);
+  }
+
+  /** Single writer for the tilt value; fans out to tilt + posture listeners. */
+  private setTilt(decidegrees: number | null): void {
+    if (this.lastTiltDecidegrees === decidegrees) {
+      return;
+    }
+    this.lastTiltDecidegrees = decidegrees;
+    for (const listener of this.tiltListeners) {
+      listener(decidegrees);
+    }
+    this.emitPosture();
   }
 
   private postureStatus(): PostureStatus {
@@ -803,8 +828,7 @@ export class UprightGoDevice {
     this.monitorSubscriptions.clear();
     this.gattReady = false;
     // No live tilt while disconnected; posture listeners hear 'unknown'.
-    this.lastTiltDecidegrees = null;
-    this.emitPosture();
+    this.setTilt(null);
     // Same for vitals — stale battery/worn readings must not present as live.
     this.setVitals(EMPTY_VITALS);
   }

@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -78,6 +79,7 @@ export default function SelectDeviceScreen() {
         void disconnect();
         return;
       }
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       // Replace so the back gesture from the connected screen returns home,
       // not to a consumed scan list.
       router.replace('/connected');

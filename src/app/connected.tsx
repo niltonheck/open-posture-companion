@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -16,6 +17,7 @@ import {
 import type { PostureStatus } from '@/device/types';
 import { useDevice } from '@/hooks/useDevice';
 import { usePosture } from '@/hooks/usePosture';
+import { useTilt } from '@/hooks/useTilt';
 import { useVitals } from '@/hooks/useVitals';
 
 const POSTURE_LINE: Record<PostureStatus, { label: string; color: string }> = {
@@ -57,16 +59,44 @@ export default function ConnectedScreen() {
     }
   }, [connectionState, router]);
 
+  // Single site for the null-worn policy: only a definite aac3 'not worn'
+  // hides posture/tilt or mutes the tick — null (not yet primed) fails
+  // open, so a slow priming read doesn't blank a live status line.
+  const deviceOff = vitals.worn === false;
+
+  // Light haptic tick when the wearer flips from upright to slouching.
+  // Strictly 'upright' → 'slouching': posture round-trips through
+  // 'unknown' on every drop/reconnect and at mount, and those
+  // re-emissions are not posture changes — ticking there would buzz for
+  // radio blips. Muted while the device dangles (its tilt is not the
+  // wearer's posture) and while this screen is covered (calibrate on top:
+  // the user is repositioning on purpose, and a stray tick would blur
+  // into calibrate's own success haptic).
+  const focusedRef = useRef(true);
+  const prevPostureRef = useRef<PostureStatus>(posture);
+  useEffect(() => {
+    const flipped =
+      posture === 'slouching' && prevPostureRef.current === 'upright';
+    prevPostureRef.current = posture;
+    if (flipped && !deviceOff && focusedRef.current) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }, [posture, deviceOff]);
+
   // headerBackVisible/gestureEnabled in _layout.tsx cover iOS; the Android
   // hardware back button ignores both, so it needs its own block while
   // this screen is focused. Exits stay: Disconnect, or a connection drop.
   useFocusEffect(
     useCallback(() => {
+      focusedRef.current = true;
       const subscription = BackHandler.addEventListener(
         'hardwareBackPress',
         () => true,
       );
-      return () => subscription.remove();
+      return () => {
+        focusedRef.current = false;
+        subscription.remove();
+      };
     }, []),
   );
 
@@ -192,7 +222,7 @@ export default function ConnectedScreen() {
             accessibilityLiveRegion="polite"
           >
             <Text style={Type.body}>Posture: </Text>
-            {vitals.worn === false ? (
+            {deviceOff ? (
               // A dangling device still streams tilt; never present that
               // as the wearer's posture.
               <Text style={[Type.body, styles.postureValue]}>
@@ -207,6 +237,7 @@ export default function ConnectedScreen() {
             )}
           </View>
         )}
+        <TiltCaption visible={!reconnecting && !deviceOff} />
         {!reconnecting && (vitals.batteryPercent !== null || vitals.paused) && (
           <View style={styles.vitalsRow} accessible>
             {vitals.batteryPercent !== null && (
@@ -328,6 +359,25 @@ export default function ConnectedScreen() {
   );
 }
 
+/**
+ * One line, not a gauge (Phase 6.5). Tilt is absolute, so it is meaningful
+ * even before calibration. A leaf subscriber so the chatty tilt stream
+ * re-renders only this caption per degree, never the whole screen.
+ * Deliberately NOT a live region — it changes every degree and would drown
+ * a screen reader.
+ */
+function TiltCaption({ visible }: { visible: boolean }) {
+  const tilt = useTilt();
+  if (!visible || tilt === null) {
+    return null;
+  }
+  return (
+    <Text style={[Type.caption, styles.tiltLine]}>
+      Forward tilt: about {tilt}°
+    </Text>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -351,6 +401,9 @@ const styles = StyleSheet.create({
   },
   reconnectingHint: {
     marginTop: 8,
+  },
+  tiltLine: {
+    marginTop: 4,
   },
   vitalsRow: {
     marginTop: 8,

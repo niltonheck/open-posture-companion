@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -41,6 +42,7 @@ export default function CalibrateScreen() {
     }
     try {
       await device.calibrate();
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setFlow('done');
     } catch {
       // Rejects when the link dropped or before the first tilt reading

@@ -1,21 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- Open Posture Companion mark: spine curve + sensor dots + signal arcs.
-       Recreated as vector from the directional mockups (specs/assets). -->
-  <g transform="translate(-48 0)">
-    <g fill="none" stroke-linecap="round">
-      <!-- spine: gentle S in charcoal -->
-      <path d="M 498 330 C 408 405, 498 490, 458 572 C 428 634, 406 682, 428 726"
-            stroke="#202832" stroke-width="64"/>
-      <!-- signal arcs opening up-right, centered on the top sensor dot (590,480) -->
-      <path d="M 618.5 373.7 A 110 110 0 0 1 696.3 451.5" stroke="#F5A623" stroke-width="36"/>
-      <path d="M 640.5 291.7 A 195 195 0 0 1 778.3 429.5" stroke="#F5A623" stroke-width="36"/>
-    </g>
-    <!-- sensor dots along the spine -->
-    <g fill="#F5A623">
-      <circle cx="590" cy="480" r="32"/>
-      <circle cx="590" cy="565" r="32"/>
-      <circle cx="590" cy="650" r="32"/>
-      <circle cx="590" cy="735" r="32"/>
-    </g>
-  </g>
-</svg>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="500"
+   height="500.00003"
+   viewBox="0 0 132.29166 132.29168"
+   version="1.1"
+   id="svg5"
+   xml:space="preserve"
+   inkscape:version="1.2 (dc2aeda, 2022-05-15)"
+   sodipodi:docname="logo-open-posture-companion.svg"
+   inkscape:export-filename="logo-open-posture-companion-plan.svg"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"><defs
+     id="defs2" /><g
+     inkscape:label="Camada 1"
+     inkscape:groupmode="layer"
+     id="layer1"><g
+       id="g4848"
+       transform="translate(-15.483139,15.931773)"><path
+         style="fill:none;stroke:#232b34;stroke-width:6.61458;stroke-linecap:round;stroke-dasharray:none;stroke-opacity:1"
+         d="m 66.663576,19.937726 c 0,0 -12.167127,12.47386 -5.214483,30.1622 6.952642,17.688343 7.463866,22.800579 -0.408978,38.035047"
+         id="path356"
+         sodipodi:nodetypes="csc" /><circle
+         style="fill:#f9a528;fill-opacity:1;stroke:none;stroke-width:14.6932;stroke-linecap:round;stroke-dasharray:none"
+         id="path1063"
+         cx="80.204796"
+         cy="36.669708"
+         r="3.7041667" /><circle
+         style="display:inline;fill:#f9a528;fill-opacity:1;stroke:none;stroke-width:14.6932;stroke-linecap:round;stroke-dasharray:none"
+         id="circle1903"
+         cx="82.236908"
+         cy="52.607109"
+         r="3.7041667"
+         inkscape:label="circle1903" /><circle
+         style="fill:#f9a528;fill-opacity:1;stroke:none;stroke-width:14.6932;stroke-linecap:round;stroke-dasharray:none"
+         id="circle1905"
+         cx="82.236908"
+         cy="68.886551"
+         r="3.7041667" /><circle
+         style="fill:#f9a528;fill-opacity:1;stroke:none;stroke-width:14.6932;stroke-linecap:round;stroke-dasharray:none"
+         id="circle1907"
+         cx="80.217575"
+         cy="85.296837"
+         r="3.7041667" /><path
+         style="opacity:1;fill:none;stroke:#f8a328;stroke-width:3.70417;stroke-linecap:round;stroke-dasharray:none;stroke-opacity:1"
+         d="m 86.396812,10.837943 c 4.888751,0.265781 17.814988,3.861272 18.966398,19.068645"
+         id="path1963"
+         sodipodi:nodetypes="cc" /><path
+         style="opacity:1;fill:none;stroke:#f9a328;stroke-width:3.70417;stroke-linecap:round;stroke-dasharray:none;stroke-opacity:1"
+         d="m 84.86314,21.31803 c 5.635676,0.965957 9.51199,3.799723 10.377839,10.428963"
+         id="path2073"
+         sodipodi:nodetypes="cc" /></g></g></svg>

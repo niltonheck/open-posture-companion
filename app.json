@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "openposturecompanion",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "ios": {
       "appleTeamId": "687352U98F",
       "bundleIdentifier": "com.niltonheck.openposturecompanion",

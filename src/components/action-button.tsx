@@ -20,6 +20,7 @@ export function ActionButton({
   disabled = false,
   loading = false,
   compact = false,
+  icon,
 }: {
   label: string;
   onPress: () => void;
@@ -29,6 +30,8 @@ export function ActionButton({
   loading?: boolean;
   /** Fit content width (e.g. inside a device card) instead of full width. */
   compact?: boolean;
+  /** Decorative leading icon; replaced by the spinner while loading. */
+  icon?: React.ReactNode;
 }) {
   const labelColor = LABEL_COLOR[variant];
   return (
@@ -46,9 +49,12 @@ export function ActionButton({
         (disabled || loading) && styles.disabled,
       ]}
     >
-      {loading && <ActivityIndicator size="small" color={labelColor} />}
+      {loading ? <ActivityIndicator size="small" color={labelColor} /> : icon}
       <Text
-        style={[styles.label, { color: labelColor }]}
+        style={[
+          styles.label,
+          { color: labelColor, fontWeight: LABEL_WEIGHT[variant] },
+        ]}
         maxFontSizeMultiplier={2}
       >
         {label}
@@ -57,10 +63,22 @@ export function ActionButton({
   );
 }
 
+// Outline reads as a quieter secondary action (specs/assets/
+// device_selection.png shows Connect at regular weight); filled variants
+// keep the bold button token.
+const LABEL_WEIGHT: Record<ActionButtonVariant, '400' | '700'> = {
+  primary: '700',
+  neutral: '700',
+  outline: '400',
+  ghost: '700',
+};
+
 const LABEL_COLOR: Record<ActionButtonVariant, string> = {
   primary: Palette.primaryCharcoal,
   neutral: Palette.cardSoftCream,
-  outline: Palette.primaryCharcoal,
+  // Amber like the border (specs/assets/device_selection.png), darkened to
+  // pass WCAG AA on the cream fill — raw accentAmber is ~2:1 there.
+  outline: Palette.accentAmberText,
   ghost: Palette.primaryCharcoal,
 };
 

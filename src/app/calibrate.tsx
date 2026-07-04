@@ -1,7 +1,16 @@
+import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ActionButton } from '@/components/action-button';
 import { Card } from '@/components/card';
@@ -22,6 +31,32 @@ const BUTTON_TEXT: Record<FlowResult, { label: string; a11y: string }> = {
   done: { label: 'Done', a11y: 'Done' },
   error: { label: 'Try again', a11y: 'Try calibration again' },
 };
+
+/** One "Before you begin" row: soft-amber badge + text, per the mockup. */
+function ChecklistRow({
+  icon,
+  text,
+  title = false,
+}: {
+  icon: React.ReactNode;
+  text: string;
+  title?: boolean;
+}) {
+  return (
+    <View style={styles.checklistRow} accessible>
+      <View
+        style={styles.checklistBadge}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        {icon}
+      </View>
+      <Text style={[title ? Type.title : Type.body, styles.checklistText]}>
+        {text}
+      </Text>
+    </View>
+  );
+}
 
 export default function CalibrateScreen() {
   const router = useRouter();
@@ -56,90 +91,135 @@ export default function CalibrateScreen() {
     : BUTTON_TEXT[flow];
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {flow === 'done' ? (
-        <Card>
-          <Text style={[Type.display, styles.doneTitle]}>
-            Calibration complete
-          </Text>
-          <Text style={Type.body}>
-            The device vibrates twice to confirm. Your current posture is now
-            the reference for the live status, and the device will vibrate
-            when you slouch past it.
-          </Text>
-        </Card>
-      ) : (
-        <>
-          <Card>
-            <Text style={Type.display}>
-              Sit or stand in your ideal posture, then hold still.
-            </Text>
-          </Card>
-
-          <Card>
-            <Text style={[Type.title, styles.checklistTitle]}>
-              Before you begin
-            </Text>
-            {/* Bullets are decorative; group each row so screen readers
-                read the item text without a stray "middle dot". */}
-            <View style={styles.checklistItem} accessible>
-              <Text
-                style={[Type.body, styles.checklistBullet]}
-                accessibilityElementsHidden
-              >
-                ·
-              </Text>
-              <Text style={Type.body}>Place the device comfortably</Text>
-            </View>
-            <View style={styles.checklistItem} accessible>
-              <Text
-                style={[Type.body, styles.checklistBullet]}
-                accessibilityElementsHidden
-              >
-                ·
-              </Text>
-              <Text style={Type.body}>Hold still for a moment</Text>
-            </View>
-          </Card>
-
-          {flow === 'error' && (
-            <Text style={[Type.body, styles.errorText]}>
-              Calibration didn’t complete. Make sure the device is connected
-              and you’re holding still, then try again.
-            </Text>
-          )}
-          {linkDown && (
-            <Text
-              style={[Type.body, styles.errorText]}
-              accessibilityLiveRegion="polite"
-            >
-              {bluetoothOff
-                ? 'Bluetooth is off. Turn it on to reconnect.'
-                : 'Connection lost. Waiting for the device to reconnect…'}
-            </Text>
-          )}
-        </>
-      )}
-
-      <ActionButton
-        label={buttonText.label}
-        accessibilityLabel={buttonText.a11y}
-        variant="primary"
-        loading={calibrating}
-        disabled={flow !== 'done' && linkDown}
-        onPress={() => {
-          if (flow === 'done') {
-            router.back();
-          } else {
-            void handleStart();
-          }
-        }}
-      />
-
-      <View style={styles.footer}>
-        <Disclaimer medical />
+    <SafeAreaView style={styles.container}>
+      {/* Native header is hidden (_layout.tsx); iOS swipe-back still works. */}
+      <View style={styles.pageHeader}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          onPress={() => router.back()}
+          hitSlop={12}
+          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+        >
+          <MaterialIcons
+            name="arrow-back"
+            size={28}
+            color={Palette.primaryCharcoal}
+          />
+        </Pressable>
+        <Text style={styles.pageTitle} accessibilityRole="header">
+          Calibrate posture
+        </Text>
       </View>
-    </ScrollView>
+      <ScrollView contentContainerStyle={styles.content}>
+        {flow === 'done' ? (
+          <Card>
+            <Text style={[Type.display, styles.doneTitle]}>
+              Calibration complete
+            </Text>
+            <Text style={Type.body}>
+              The device vibrates twice to confirm. Your current posture is now
+              the reference for the live status, and the device will vibrate
+              when you slouch past it.
+            </Text>
+          </Card>
+        ) : (
+          <>
+            <Card style={styles.heroCard}>
+              <Text style={[Type.display, styles.heroText]}>
+                Sit or stand in your ideal posture, then hold still.
+              </Text>
+              <Image
+                source={require('../../assets/images/illustration-calibrate.png')}
+                style={styles.heroImage}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+              />
+            </Card>
+
+            <ActionButton
+              label={buttonText.label}
+              accessibilityLabel={buttonText.a11y}
+              variant="primary"
+              icon={
+                <Image
+                  source={require('../../assets/images/icon-calibrate.png')}
+                  style={styles.buttonIcon}
+                />
+              }
+              loading={calibrating}
+              disabled={linkDown}
+              onPress={() => void handleStart()}
+            />
+
+            <Card style={styles.checklistCard}>
+              <ChecklistRow
+                title
+                text="Before you begin"
+                icon={
+                  <MaterialIcons
+                    name="info-outline"
+                    size={22}
+                    color={Palette.primaryCharcoal}
+                  />
+                }
+              />
+              <View style={styles.divider} />
+              <ChecklistRow
+                text="Place the device comfortably"
+                icon={
+                  <Image
+                    source={require('../../assets/images/icon-device.png')}
+                    style={styles.checklistGlyph}
+                  />
+                }
+              />
+              <View style={styles.divider} />
+              <ChecklistRow
+                text="Hold still for a moment"
+                icon={
+                  <MaterialIcons
+                    name="schedule"
+                    size={22}
+                    color={Palette.primaryCharcoal}
+                  />
+                }
+              />
+            </Card>
+
+            {flow === 'error' && (
+              <Text style={[Type.body, styles.errorText]}>
+                Calibration didn’t complete. Make sure the device is connected
+                and you’re holding still, then try again.
+              </Text>
+            )}
+            {linkDown && (
+              <Text
+                style={[Type.body, styles.errorText]}
+                accessibilityLiveRegion="polite"
+              >
+                {bluetoothOff
+                  ? 'Bluetooth is off. Turn it on to reconnect.'
+                  : 'Connection lost. Waiting for the device to reconnect…'}
+              </Text>
+            )}
+          </>
+        )}
+
+        {flow === 'done' && (
+          <ActionButton
+            label={buttonText.label}
+            accessibilityLabel={buttonText.a11y}
+            variant="primary"
+            onPress={() => router.back()}
+          />
+        )}
+
+        <View style={styles.footer}>
+          <Disclaimer medical />
+        </View>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -147,20 +227,76 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  pageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Layout.pagePadding,
+    paddingVertical: Layout.componentGap,
+  },
+  backButton: {
+    position: 'absolute',
+    left: Layout.pagePadding,
+  },
+  pressed: {
+    opacity: 0.6,
+  },
+  pageTitle: {
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '700',
+    color: Palette.primaryCharcoal,
+  },
   content: {
     padding: Layout.pagePadding,
+    paddingTop: Layout.componentGap,
     gap: Layout.componentGap,
   },
-  checklistTitle: {
-    marginBottom: 4,
-  },
-  checklistItem: {
+  heroCard: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    gap: Layout.componentGap,
+    paddingVertical: Layout.sectionGap,
   },
-  checklistBullet: {
-    color: Palette.accentAmber,
-    fontWeight: '700',
+  heroText: {
+    flex: 1,
+  },
+  heroImage: {
+    // 3x asset is 423x660 — keep the aspect to avoid resampling distortion.
+    width: 141,
+    height: 220,
+  },
+  buttonIcon: {
+    width: 20,
+    height: 20,
+  },
+  checklistCard: {
+    gap: 10,
+  },
+  checklistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Layout.componentGap,
+  },
+  checklistBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: Palette.softAmber,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checklistGlyph: {
+    width: 22,
+    height: 22,
+  },
+  checklistText: {
+    flex: 1,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: Palette.borderDivider,
+    marginLeft: 40 + Layout.componentGap,
   },
   doneTitle: {
     color: Palette.successGreen,

@@ -34,7 +34,8 @@ export default function RootLayout() {
             gestureEnabled: false,
           }}
         />
-        <Stack.Screen name="calibrate" options={{ title: 'Calibrate posture' }} />
+        {/* In-page back arrow + centered title per the calibrate mockup. */}
+        <Stack.Screen name="calibrate" options={{ headerShown: false }} />
       </Stack>
     </DeviceProvider>
   );

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Mini posture-device glyph for checklist badges.
+     Original artwork in the brand stroke style (specs/design_decisions.md). -->
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <rect x="8" y="3.5" width="8" height="15" rx="4"
+        fill="none" stroke="#202832" stroke-width="2"/>
+  <circle cx="12" cy="13.5" r="1.7" fill="#202832"/>
+</svg>

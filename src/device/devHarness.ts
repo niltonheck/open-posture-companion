@@ -16,6 +16,13 @@ import { UprightGoDevice } from './UprightGoDevice';
 
 const TAG = '[harness]';
 
+/**
+ * Master switch for the dev probe buttons on the connected screen. The
+ * protocol work that needed them is done (phases 1–6); flip to true for the
+ * next hardware-debugging session. Only honored in __DEV__ builds.
+ */
+export const DEV_PROBES_ENABLED = false;
+
 let started = false;
 
 /**

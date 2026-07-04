@@ -18,7 +18,8 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="select" options={{ title: 'Select device' }} />
+        {/* In-page back arrow + large title per specs/assets/device_selection.png */}
+        <Stack.Screen name="select" options={{ headerShown: false }} />
         {/* Leaving this screen without disconnecting would show the home
             screen's "No device connected" while a link is still live — the
             only ways out are the Disconnect action or a connection drop.
@@ -27,8 +28,9 @@ export default function RootLayout() {
         <Stack.Screen
           name="connected"
           options={{
-            title: 'Connected',
-            headerBackVisible: false,
+            // In-page AppHeader instead of a native bar; no back affordance
+            // by design (see comment above), so nothing is lost by hiding it.
+            headerShown: false,
             gestureEnabled: false,
           }}
         />

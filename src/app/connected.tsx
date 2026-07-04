@@ -1,9 +1,22 @@
+import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { BackHandler, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  BackHandler,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import Animated, { FadeIn } from 'react-native-reanimated';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ActionButton } from '@/components/action-button';
+import { AppHeader } from '@/components/app-header';
+import { BluetoothPulse } from '@/components/bluetooth-pulse';
 import { Card } from '@/components/card';
 import { Disclaimer } from '@/components/disclaimer';
 import { Layout, Palette } from '@/constants/palette';
@@ -11,6 +24,7 @@ import { Type } from '@/constants/typography';
 // Dev-only probe triggers (Phase 5) — sanctioned harness exception to the
 // screens-use-hooks-only rule, like the Phase 1 harness before it.
 import {
+  DEV_PROBES_ENABLED,
   dumpReadableCharacteristics,
   monitorAllNotifiables,
 } from '@/device/devHarness';
@@ -31,16 +45,66 @@ const POSTURE_LINE: Record<PostureStatus, { label: string; color: string }> = {
 
 type PendingAction = 'vibration' | 'pause' | 'disconnect' | null;
 
+/**
+ * Compact battery state beside the "Connected" label: glyph picked from the
+ * 0–6 bar Material set (or the charging bolt), colored by charge level.
+ * Color never carries the meaning alone — the percent text is right there.
+ */
+function BatteryIndicator({
+  percent,
+  charging,
+}: {
+  percent: number | null;
+  charging: boolean | null;
+}) {
+  if (percent === null) {
+    return null;
+  }
+  const name = (
+    charging
+      ? 'battery-charging-full'
+      : percent >= 95
+        ? 'battery-full'
+        : `battery-${Math.min(6, Math.max(0, Math.round((percent / 100) * 6)))}-bar`
+  ) as keyof typeof MaterialIcons.glyphMap;
+  const color =
+    percent <= 10
+      ? Palette.errorRed
+      : percent <= 25
+        ? Palette.warningOrange
+        : Palette.successGreen;
+  return (
+    <View
+      style={styles.batteryChip}
+      accessible
+      accessibilityLabel={`Battery about ${percent} percent${charging ? ', charging' : ''}`}
+    >
+      <MaterialIcons name={name} size={18} color={color} />
+      <Text style={Type.caption}>{percent}%</Text>
+    </View>
+  );
+}
+
 export default function ConnectedScreen() {
   const router = useRouter();
   const { device, connectionState, bluetoothOff, disconnect } = useDevice();
   const posture = usePosture();
   const vitals = useVitals();
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  // Seeded so the Status card renders from the start (per the mockup) —
+  // arriving on this screen is itself the first "action".
   const [lastAction, setLastAction] = useState<{
     ok: boolean;
     text: string;
-  } | null>(null);
+  }>({ ok: true, text: 'Connected' });
+  // Test vibration + Status live behind this disclosure. A failed action
+  // must never report into a collapsed section, so errors force it open.
+  const [toolsOpen, setToolsOpen] = useState(false);
+  useEffect(() => {
+    if (!lastAction.ok) {
+      setToolsOpen(true);
+    }
+  }, [lastAction]);
 
   // Deliberate disconnect lands on 'idle', an exhausted reconnect schedule
   // on 'disconnected' — either way this screen's subject is gone, so
@@ -126,22 +190,22 @@ export default function ConnectedScreen() {
     setMonitorProbeOn(true);
   };
 
-  const handleTogglePause = async () => {
+  const handleToggleMode = async () => {
     if (!device) {
       return;
     }
-    const target = !vitals.paused;
+    const toTracking = !vitals.paused;
     setPendingAction('pause');
     try {
-      await device.setPaused(target);
+      await device.setPaused(toTracking);
       setLastAction({
         ok: true,
-        text: target ? 'Reminders paused' : 'Reminders resumed',
+        text: toTracking ? 'Tracking mode on' : 'Training mode on',
       });
     } catch {
       setLastAction({
         ok: false,
-        text: 'Couldn’t update reminders. Try again.',
+        text: 'Couldn’t switch the mode. Try again.',
       });
     } finally {
       setPendingAction(null);
@@ -192,19 +256,56 @@ export default function ConnectedScreen() {
   const needsCalibration = !reconnecting && posture === 'unknown';
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Card>
-        <Text
-          style={[
-            Type.body,
-            reconnecting ? styles.reconnectingLabel : styles.connectedLabel,
-          ]}
-        >
-          {reconnecting ? 'Connection lost' : 'Connected'}
-        </Text>
-        <Text style={Type.display}>{device?.name ?? 'Posture device'}</Text>
-        <Text style={Type.body}>Compatible device</Text>
-        {reconnecting ? (
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <AppHeader style={styles.appHeader} />
+        <Card>
+          <View style={styles.deviceRow}>
+            <View
+              style={[
+                styles.stateBadge,
+                reconnecting ? styles.stateBadgeWarn : styles.stateBadgeOk,
+              ]}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              {reconnecting ? (
+                <BluetoothPulse size={34} color={Palette.warningOrange} />
+              ) : (
+                <MaterialIcons
+                  name="check-circle-outline"
+                  size={38}
+                  color={Palette.successGreen}
+                />
+              )}
+            </View>
+            <View style={styles.deviceSummary}>
+              <View style={styles.stateLabelRow}>
+                <Text
+                  style={[
+                    Type.body,
+                    reconnecting
+                      ? styles.reconnectingLabel
+                      : styles.connectedLabel,
+                  ]}
+                >
+                  {reconnecting ? 'Connection lost' : 'Connected'}
+                </Text>
+                {/* Hidden while reconnecting — the reading would be stale. */}
+                {!reconnecting && (
+                  <BatteryIndicator
+                    percent={vitals.batteryPercent}
+                    charging={vitals.charging}
+                  />
+                )}
+              </View>
+              <Text style={Type.display}>
+                {device?.name ?? 'Posture device'}
+              </Text>
+              <Text style={Type.body}>Compatible device</Text>
+            </View>
+          </View>
+          {reconnecting ? (
           <Text
             style={[Type.body, styles.reconnectingHint]}
             accessibilityLiveRegion="polite"
@@ -238,17 +339,28 @@ export default function ConnectedScreen() {
           </View>
         )}
         <TiltCaption visible={!reconnecting && !deviceOff} />
-        {!reconnecting && (vitals.batteryPercent !== null || vitals.paused) && (
-          <View style={styles.vitalsRow} accessible>
-            {vitals.batteryPercent !== null && (
-              <Text style={Type.caption}>
-                Battery: about {vitals.batteryPercent}%
-                {vitals.charging ? ' · Charging' : ''}
+        {/* Training = slouch vibration on; Tracking = senses only. The
+            device's own taxonomy — never "paused/resumed" in UI copy. */}
+        {!reconnecting && vitals.paused !== null && (
+          <View style={styles.modeRow} accessible>
+            <View
+              style={[
+                styles.modePill,
+                vitals.paused ? styles.modePillTracking : styles.modePillTraining,
+              ]}
+            >
+              <MaterialIcons
+                name={vitals.paused ? 'visibility' : 'notifications-active'}
+                size={14}
+                color={Palette.primaryCharcoal}
+              />
+              <Text style={[Type.caption, styles.modePillText]}>
+                {vitals.paused ? 'Tracking mode' : 'Training mode'}
               </Text>
-            )}
+            </View>
             {vitals.paused && (
               <Text style={Type.caption}>
-                Reminders paused — the device senses but won’t vibrate
+                Senses posture — no slouch vibrations
               </Text>
             )}
           </View>
@@ -260,8 +372,9 @@ export default function ConnectedScreen() {
           <Text style={Type.title}>Calibration needed</Text>
           <Text style={Type.body}>
             Sit or stand upright, then calibrate. This sets the reference
-            for the live status and turns on the device’s slouch vibration.
-            If the device was calibrated before, this simply resets it.
+            for the live status and turns on Training mode (slouch
+            vibrations). If the device was calibrated before, this simply
+            resets it.
           </Text>
         </Card>
       )}
@@ -277,47 +390,112 @@ export default function ConnectedScreen() {
         label="Calibrate posture"
         accessibilityLabel="Start calibration"
         variant="primary"
+        icon={
+          <Image
+            source={require('../../assets/images/icon-calibrate.png')}
+            style={styles.buttonIcon}
+          />
+        }
         disabled={actionsDisabled}
         onPress={() => router.navigate('/calibrate')}
       />
       <ActionButton
-        label={pendingAction === 'vibration' ? 'Sending vibration…' : 'Test vibration'}
-        accessibilityLabel="Send vibration test"
-        variant="outline"
-        loading={pendingAction === 'vibration'}
-        disabled={actionsDisabled}
-        onPress={() => void handleTestVibration()}
-      />
-      <ActionButton
         label={
           pendingAction === 'pause'
-            ? 'Updating…'
+            ? 'Switching…'
             : vitals.paused
-              ? 'Resume reminders'
-              : 'Pause reminders'
+              ? 'Switch to Training mode'
+              : 'Switch to Tracking mode'
         }
         accessibilityLabel={
-          vitals.paused ? 'Resume posture reminders' : 'Pause posture reminders'
+          vitals.paused
+            ? 'Switch to Training mode, turns slouch vibrations on'
+            : 'Switch to Tracking mode, senses posture without vibrating'
         }
         variant="outline"
+        icon={
+          <MaterialIcons
+            name={vitals.paused ? 'notifications-active' : 'visibility'}
+            size={20}
+            color={Palette.accentAmber}
+          />
+        }
         loading={pendingAction === 'pause'}
         disabled={actionsDisabled}
-        onPress={() => void handleTogglePause()}
+        onPress={() => void handleToggleMode()}
       />
 
-      {lastAction && (
-        <Card>
-          <Text style={Type.title}>Status</Text>
-          <Text
-            style={[Type.body, !lastAction.ok && styles.errorText]}
-            accessibilityLiveRegion="polite"
-          >
-            Last action: {lastAction.text}
-          </Text>
-        </Card>
+      {/* Occasional tools live behind a quiet disclosure so they don't cost
+          vertical space; a failed action force-opens it so the error is
+          never invisible. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="More device tools"
+        accessibilityState={{ expanded: toolsOpen }}
+        onPress={() => setToolsOpen((open) => !open)}
+        style={({ pressed }) => [
+          styles.toolsToggle,
+          pressed && styles.toolsTogglePressed,
+        ]}
+      >
+        <MaterialIcons
+          name={toolsOpen ? 'expand-less' : 'expand-more'}
+          size={20}
+          color={Palette.secondarySlate}
+        />
+        <Text style={Type.caption}>
+          {toolsOpen ? 'Fewer tools' : 'More tools'}
+        </Text>
+      </Pressable>
+
+      {toolsOpen && (
+        <Animated.View entering={FadeIn.duration(150)} style={styles.toolsBody}>
+          <ActionButton
+            label={
+              pendingAction === 'vibration'
+                ? 'Sending vibration…'
+                : 'Test vibration'
+            }
+            accessibilityLabel="Send vibration test"
+            variant="outline"
+            icon={
+              <Image
+                source={require('../../assets/images/icon-vibration.png')}
+                style={styles.buttonIcon}
+              />
+            }
+            loading={pendingAction === 'vibration'}
+            disabled={actionsDisabled}
+            onPress={() => void handleTestVibration()}
+          />
+          <Card>
+            <View style={styles.statusRow}>
+              <View
+                style={styles.statusBadge}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+              >
+                <MaterialIcons
+                  name="schedule"
+                  size={28}
+                  color={Palette.primaryCharcoal}
+                />
+              </View>
+              <View style={styles.statusSummary}>
+                <Text style={Type.title}>Status</Text>
+                <Text
+                  style={[Type.body, !lastAction.ok && styles.errorText]}
+                  accessibilityLiveRegion="polite"
+                >
+                  Last action: {lastAction.text}
+                </Text>
+              </View>
+            </View>
+          </Card>
+        </Animated.View>
       )}
 
-      {__DEV__ && (
+      {__DEV__ && DEV_PROBES_ENABLED && (
         <>
           <ActionButton
             label="Dev: read probe (log snapshot)"
@@ -349,13 +527,21 @@ export default function ConnectedScreen() {
           label={pendingAction === 'disconnect' ? 'Disconnecting…' : 'Disconnect'}
           accessibilityLabel="Disconnect from device"
           variant="ghost"
+          icon={
+            <MaterialIcons
+              name="power-settings-new"
+              size={20}
+              color={Palette.primaryCharcoal}
+            />
+          }
           loading={pendingAction === 'disconnect'}
           disabled={busy}
           onPress={() => void handleDisconnect()}
         />
         <Disclaimer />
       </View>
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -386,6 +572,100 @@ const styles = StyleSheet.create({
     padding: Layout.pagePadding,
     gap: Layout.componentGap,
   },
+  appHeader: {
+    marginBottom: Layout.sectionGap - Layout.componentGap,
+  },
+  buttonIcon: {
+    width: 20,
+    height: 20,
+  },
+  deviceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Layout.componentGap,
+  },
+  stateLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  batteryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  modeRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  modePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  modePillTraining: {
+    backgroundColor: Palette.softGreen,
+  },
+  modePillTracking: {
+    backgroundColor: Palette.softAmber,
+  },
+  modePillText: {
+    color: Palette.primaryCharcoal,
+  },
+  toolsToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 8,
+  },
+  toolsTogglePressed: {
+    opacity: 0.6,
+  },
+  toolsBody: {
+    gap: Layout.componentGap,
+  },
+  stateBadge: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stateBadgeOk: {
+    backgroundColor: Palette.softGreen,
+  },
+  stateBadgeWarn: {
+    backgroundColor: Palette.softAmber,
+  },
+  deviceSummary: {
+    flex: 1,
+    gap: 2,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Layout.componentGap,
+  },
+  statusBadge: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: Palette.softAmber,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusSummary: {
+    flex: 1,
+    gap: 2,
+  },
   connectedLabel: {
     fontWeight: '700',
     color: Palette.successGreen,
@@ -404,10 +684,6 @@ const styles = StyleSheet.create({
   },
   tiltLine: {
     marginTop: 4,
-  },
-  vitalsRow: {
-    marginTop: 8,
-    gap: 2,
   },
   calloutCard: {
     backgroundColor: Palette.softAmber,

@@ -1,19 +1,31 @@
+import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
+  Image,
+  Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import Animated, {
+  FadeIn,
+  FadeOut,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ActionButton } from '@/components/action-button';
+import { BluetoothPulse } from '@/components/bluetooth-pulse';
 import { Card } from '@/components/card';
 import { Disclaimer } from '@/components/disclaimer';
 import { Layout, Palette } from '@/constants/palette';
 import { Type } from '@/constants/typography';
+import { DEVICE_NAME } from '@/device/characteristics';
 import type { DiscoveredDevice, SignalStrength } from '@/device/types';
 import { useDevice } from '@/hooks/useDevice';
 
@@ -29,6 +41,96 @@ const SIGNAL_COLOR: Record<SignalStrength, string> = {
   medium: Palette.warningOrange,
   weak: Palette.errorRed,
 };
+
+/**
+ * One discovered device. While this row is connecting, its content dims in
+ * place (still occupying layout, so the card never resizes) and a centered
+ * "Connecting…" overlay crossfades in — the button label itself never
+ * changes, which is what kept jolting the row width.
+ */
+function DeviceRow({
+  item,
+  connecting,
+  disabled,
+  onConnect,
+}: {
+  item: DiscoveredDevice;
+  connecting: boolean;
+  /** Some connection attempt is in flight (this row's or another's). */
+  disabled: boolean;
+  onConnect: () => void;
+}) {
+  const dim = useSharedValue(connecting ? 1 : 0);
+  useEffect(() => {
+    dim.value = withTiming(connecting ? 1 : 0, { duration: 200 });
+  }, [connecting, dim]);
+  const contentStyle = useAnimatedStyle(() => ({
+    opacity: 1 - dim.value * 0.85,
+  }));
+
+  return (
+    <Card>
+      <Animated.View
+        style={[styles.deviceRowContent, contentStyle]}
+        accessibilityElementsHidden={connecting}
+        importantForAccessibility={
+          connecting ? 'no-hide-descendants' : 'auto'
+        }
+      >
+        <View
+          style={styles.deviceTile}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          {item.name === DEVICE_NAME ? (
+            // Original silhouette illustration, not an UPRIGHT asset —
+            // see the header comment in device-upright-go.svg.
+            <Image
+              source={require('../../assets/images/device-upright-go.png')}
+              style={styles.deviceTileLogo}
+            />
+          ) : (
+            <MaterialIcons
+              name="bluetooth"
+              size={34}
+              color={Palette.primaryCharcoal}
+            />
+          )}
+        </View>
+        {/* One grouped element: "UprightGO, Signal: Strong" per swipe. */}
+        <View style={styles.deviceInfo} accessible>
+          <Text style={Type.title}>{item.name}</Text>
+          <Text style={Type.body}>
+            Signal:{' '}
+            <Text style={{ color: SIGNAL_COLOR[item.signal] }}>
+              {SIGNAL_LABEL[item.signal]}
+            </Text>
+          </Text>
+        </View>
+        <ActionButton
+          label="Connect"
+          accessibilityLabel={`Connect to ${item.name}`}
+          variant="outline"
+          compact
+          disabled={disabled}
+          onPress={onConnect}
+        />
+      </Animated.View>
+      {connecting && (
+        <Animated.View
+          entering={FadeIn.duration(200)}
+          exiting={FadeOut.duration(150)}
+          style={styles.connectingOverlay}
+          pointerEvents="none"
+          accessibilityLiveRegion="polite"
+        >
+          <BluetoothPulse size={20} color={Palette.primaryCharcoal} />
+          <Text style={[Type.body, styles.connectingText]}>Connecting…</Text>
+        </Animated.View>
+      )}
+    </Card>
+  );
+}
 
 export default function SelectDeviceScreen() {
   const router = useRouter();
@@ -153,57 +255,50 @@ export default function SelectDeviceScreen() {
     // imminent, so never claim "no devices found" here.
     return (
       <View style={styles.scanningRow}>
-        <ActivityIndicator color={Palette.secondarySlate} />
+        <BluetoothPulse size={22} color={Palette.secondarySlate} />
         <Text style={Type.body}>Scanning for devices…</Text>
       </View>
     );
   };
 
-  // permissionNeeded must offer the button too: on Android a denial leaves
-  // scanStatus 'idle' (startScan bails before scanning), and "Scan again"
-  // is the only way to re-trigger the permission prompt from this screen.
-  const showScanAgain =
-    permissionNeeded ||
-    bluetoothOff ||
-    scanStatus === 'timed_out' ||
-    scanStatus === 'error' ||
-    (!scanning && listDevices.length > 0);
-
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
+      {/* Native header is hidden for this screen (_layout.tsx); the iOS
+          swipe-back gesture still works, this arrow is the visible way out. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+        onPress={() => router.back()}
+        hitSlop={12}
+        style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
+      >
+        <MaterialIcons
+          name="arrow-back"
+          size={28}
+          color={Palette.primaryCharcoal}
+        />
+      </Pressable>
       <FlatList
         data={listDevices}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
-          <Text style={Type.body}>
-            {listDevices.length > 0
-              ? 'Found nearby devices'
-              : 'Scan for compatible BLE posture devices nearby.'}
-          </Text>
+          <View style={styles.pageHeader}>
+            <Text style={Type.display}>Select device</Text>
+            <Text style={Type.body}>
+              {listDevices.length > 0
+                ? 'Found nearby devices'
+                : 'Scan for compatible BLE posture devices nearby.'}
+            </Text>
+          </View>
         }
         renderItem={({ item }) => (
-          <Card style={styles.deviceCard}>
-            {/* One grouped element: "UprightGO, Signal: Strong" per swipe. */}
-            <View style={styles.deviceInfo} accessible>
-              <Text style={Type.title}>{item.name}</Text>
-              <Text style={Type.body}>
-                Signal:{' '}
-                <Text style={{ color: SIGNAL_COLOR[item.signal] }}>
-                  {SIGNAL_LABEL[item.signal]}
-                </Text>
-              </Text>
-            </View>
-            <ActionButton
-              label={connectingId === item.id ? 'Connecting…' : 'Connect'}
-              accessibilityLabel={`Connect to ${item.name}`}
-              variant="outline"
-              compact
-              loading={connectingId === item.id}
-              disabled={connectingId !== null}
-              onPress={() => void handleConnect(item)}
-            />
-          </Card>
+          <DeviceRow
+            item={item}
+            connecting={connectingId === item.id}
+            disabled={connectingId !== null}
+            onConnect={() => void handleConnect(item)}
+          />
         )}
         ListEmptyComponent={renderEmptyState()}
         ListFooterComponent={
@@ -216,20 +311,35 @@ export default function SelectDeviceScreen() {
                 Couldn’t connect to the device. Move closer and try again.
               </Text>
             )}
-            {showScanAgain && (
-              <ActionButton
-                label="Scan again"
-                accessibilityLabel="Scan for devices"
-                variant="ghost"
-                onPress={handleScanAgain}
-                disabled={connectingId !== null}
-              />
-            )}
+            {/* Always visible; while a scan runs it turns into a disabled
+                "Scanning…" state with a pulsing bluetooth glyph. Also the
+                only way to re-trigger the permission prompt after an Android
+                denial, which leaves scanStatus 'idle'. */}
+            <ActionButton
+              label={scanning ? 'Scanning…' : 'Scan again'}
+              accessibilityLabel={
+                scanning ? 'Scanning for devices' : 'Scan for devices'
+              }
+              variant="ghost"
+              icon={
+                scanning ? (
+                  <BluetoothPulse size={20} color={Palette.primaryCharcoal} />
+                ) : (
+                  <MaterialIcons
+                    name="refresh"
+                    size={20}
+                    color={Palette.primaryCharcoal}
+                  />
+                )
+              }
+              onPress={handleScanAgain}
+              disabled={connectingId !== null || scanning}
+            />
             <Disclaimer />
           </View>
         }
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -237,18 +347,51 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  backButton: {
+    marginTop: Layout.componentGap,
+    marginLeft: Layout.pagePadding,
+    alignSelf: 'flex-start',
+  },
+  pressed: {
+    opacity: 0.6,
+  },
+  pageHeader: {
+    gap: 4,
+    marginBottom: Layout.componentGap,
+  },
   list: {
     padding: Layout.pagePadding,
     gap: Layout.componentGap,
   },
-  deviceCard: {
+  deviceRowContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: Layout.componentGap,
   },
+  connectingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  connectingText: {
+    color: Palette.primaryCharcoal,
+  },
+  deviceTile: {
+    width: 72,
+    height: 72,
+    borderRadius: Layout.radiusIconTile,
+    backgroundColor: Palette.softAmber,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deviceTileLogo: {
+    width: 60,
+    height: 60,
+  },
   deviceInfo: {
-    flexShrink: 1,
+    flex: 1,
     gap: 2,
   },
   scanningRow: {

@@ -7,6 +7,7 @@
  * touched (ADR-006).
  */
 
+import { Platform } from 'react-native';
 import { State } from 'react-native-ble-plx';
 import type { BleManager, Subscription } from 'react-native-ble-plx';
 
@@ -31,6 +32,7 @@ import type {
 export type BleTransport = Pick<
   BleManager,
   | 'connectToDevice'
+  | 'isDeviceConnected'
   | 'cancelDeviceConnection'
   | 'discoverAllServicesAndCharacteristicsForDevice'
   | 'servicesForDevice'
@@ -168,6 +170,15 @@ export class UprightGoDevice {
   /** Set while the reconnect loop is parked waiting for the adapter. */
   private adapterWaitSubscription: Subscription | null = null;
   private tiltMonitorRestarts = 0;
+  /** Stop handle for the live tilt monitor; null while it isn't running. */
+  private tiltMonitorStop: Unsubscribe | null = null;
+  /**
+   * Tiered fidelity while backgrounded (ADR-008): the chatty aaca stream
+   * is foreground-only — several notifications per second, each an iOS
+   * background wake — while the ~1/min aac9 tick and the rare vitals
+   * notifies stay subscribed. Fed by the provider from AppState.
+   */
+  private backgrounded = false;
   /** Dev-only; the GATT tree can't change between links, log it once. */
   private gattTreeLogged = false;
   private telemetryMonitorRestarts = 0;
@@ -244,7 +255,7 @@ export class UprightGoDevice {
     const epoch = this.linkEpoch;
     this.setState('connecting');
     try {
-      await this.establishLink(epoch);
+      await this.establishLink(epoch, { adoptRestoredLink: true });
       this.setState('connected');
     } catch (error) {
       // If the epoch moved on, a deliberate disconnect() (or the drop
@@ -273,11 +284,34 @@ export class UprightGoDevice {
    * drop handler, service discovery, tilt monitor. No state transitions —
    * callers own those. Throws if superseded (epoch moved) mid-flight.
    */
-  private async establishLink(epoch: number): Promise<void> {
-    await this.transport.connectToDevice(this.id, {
-      timeout: CONNECT_TIMEOUT_MS,
-    });
-    this.assertCurrent(epoch);
+  private async establishLink(
+    epoch: number,
+    { adoptRestoredLink = false }: { adoptRestoredLink?: boolean } = {},
+  ): Promise<void> {
+    // CoreBluetooth state restoration (Phase 10.3) can hand this app a
+    // link that is already live at the native level — dialing it again
+    // fails on iOS ("already connected"), so adopt it instead: skip the
+    // connect call and go straight to wiring the drop handler, discovery,
+    // and monitors. Scoped tightly: iOS only (restoration doesn't exist on
+    // Android, and skipping the dial there would bypass ble-plx's own
+    // stale-GATT self-heal inside connectToDevice), and only on connect()
+    // entry — a reconnect attempt always follows a teardown, where the
+    // probe could only ever report a stale 'true' and adopt a dead link.
+    let alreadyConnected = false;
+    if (adoptRestoredLink && Platform.OS === 'ios') {
+      try {
+        alreadyConnected = await this.transport.isDeviceConnected(this.id);
+      } catch {
+        // Can't tell — dial normally.
+      }
+      this.assertCurrent(epoch);
+    }
+    if (!alreadyConnected) {
+      await this.transport.connectToDevice(this.id, {
+        timeout: CONNECT_TIMEOUT_MS,
+      });
+      this.assertCurrent(epoch);
+    }
     this.disconnectSubscription = this.transport.onDeviceDisconnected(
       this.id,
       (error) => {
@@ -308,7 +342,12 @@ export class UprightGoDevice {
     this.gattReady = true;
     this.tiltMonitorRestarts = 0;
     this.telemetryMonitorRestarts = 0;
-    this.startTiltMonitor();
+    // A (re)connect while backgrounded — e.g. a walk-away drop recovering
+    // with the phone locked — comes up in the degraded tier directly; the
+    // tilt monitor starts when the app foregrounds.
+    if (!this.backgrounded) {
+      this.startTiltMonitor();
+    }
     this.startVitalsMonitors();
     this.startTelemetryMonitor();
     // Fire-and-forget so the extra GATT reads never delay 'connected':
@@ -544,10 +583,42 @@ export class UprightGoDevice {
     return () => this.postureListeners.delete(callback);
   }
 
-  /** Started per connection; feeds all posture listeners from one monitor. */
+  /**
+   * Foreground/background tier switch (Phase 10.2, ADR-008). Backgrounding
+   * stops the aaca tilt monitor: tilt goes null, posture listeners hear
+   * 'unknown', and — via the existing composite tracking — any open
+   * slouch-time segment is flushed and closed and the dwell timer is
+   * cleared, so measurement stops cleanly rather than crediting wall-clock
+   * time the app can't observe. Telemetry (aac9) and vitals monitors stay
+   * subscribed; timeline minutes degrade to the tick's bit-7 sample, which
+   * the stats accumulation already tolerates. Foregrounding restarts the
+   * tilt monitor on the live link with a fresh transient-death budget.
+   */
+  setBackgrounded(backgrounded: boolean): void {
+    if (this.backgrounded === backgrounded) {
+      return;
+    }
+    this.backgrounded = backgrounded;
+    if (backgrounded) {
+      this.tiltMonitorStop?.();
+      this.tiltMonitorStop = null;
+      this.setTilt(null);
+    } else if (this.gattReady) {
+      this.tiltMonitorRestarts = 0;
+      this.startTiltMonitor();
+    }
+  }
+
+  /**
+   * Started per connection; feeds all posture listeners from one monitor.
+   * Stops any previous monitor first so there is never more than one live
+   * aaca subscription — a death-restart timer racing a background→
+   * foreground cycle could otherwise start a second one with no handle.
+   */
   private startTiltMonitor(): void {
+    this.tiltMonitorStop?.();
     const epoch = this.linkEpoch;
-    this.monitor(
+    this.tiltMonitorStop = this.monitor(
       Characteristic.posture,
       (bytes) => {
         if (bytes.length < 2) {
@@ -588,7 +659,9 @@ export class UprightGoDevice {
     this.tiltMonitorRestarts += 1;
     const epoch = this.linkEpoch;
     setTimeout(() => {
-      if (epoch !== this.linkEpoch || !this.gattReady) {
+      // backgrounded: the monitor was stopped deliberately since the
+      // restart was scheduled; foregrounding owns the restart from here.
+      if (epoch !== this.linkEpoch || !this.gattReady || this.backgrounded) {
         return;
       }
       console.log(`${TAG} restarting tilt monitor (attempt ${this.tiltMonitorRestarts})`);
@@ -1067,6 +1140,7 @@ export class UprightGoDevice {
       subscription.remove();
     }
     this.monitorSubscriptions.clear();
+    this.tiltMonitorStop = null;
     this.gattReady = false;
     // No live tilt while disconnected; posture listeners hear 'unknown'.
     this.setTilt(null);

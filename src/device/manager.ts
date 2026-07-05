@@ -12,9 +12,33 @@ import type { AdapterState, Unsubscribe } from './types';
 
 let manager: BleManager | null = null;
 
+/**
+ * CoreBluetooth state-restoration key (Phase 10.3, ADR-008). With
+ * bluetooth-central background mode on, iOS keeps a connection alive for an
+ * app it evicted and relaunches the app into the background on BLE events —
+ * but only hands the session back to a central manager created with the
+ * same restoration identifier. Must never change between releases.
+ * iOS-only; Android ignores it.
+ */
+const RESTORE_STATE_IDENTIFIER = 'open-posture-companion-ble';
+
 export function getBleManager(): BleManager {
   if (!manager) {
-    manager = new BleManager();
+    manager = new BleManager({
+      restoreStateIdentifier: RESTORE_STATE_IDENTIFIER,
+      // ble-plx only activates restoration when both options are present.
+      // The callback itself is informational: reconciliation happens in
+      // the device layer, which checks isDeviceConnected before dialing,
+      // so a restored live link is adopted wherever the connect comes from.
+      restoreStateFunction: (restoredState) => {
+        if (__DEV__) {
+          const ids =
+            restoredState?.connectedPeripherals.map((device) => device.id) ??
+            [];
+          console.log('[manager] CoreBluetooth state restored:', ids);
+        }
+      },
+    });
   }
   return manager;
 }

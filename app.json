@@ -31,7 +31,8 @@
       [
         "react-native-ble-plx",
         {
-          "isBackgroundEnabled": false,
+          "isBackgroundEnabled": true,
+          "modes": ["central"],
           "neverForLocation": true,
           "bluetoothAlwaysPermission": "Allow Open Posture Companion to connect to your Upright GO device"
         }

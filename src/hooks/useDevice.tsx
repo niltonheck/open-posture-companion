@@ -18,6 +18,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
+import { AppState } from 'react-native';
 
 import {
   destroyBleManager,
@@ -242,6 +243,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // advertising, so a leaked link could never be found by a rescan.
         await deviceRef.current?.disconnect();
         instance = new UprightGoDevice(getBleManager(), target.id, target.name);
+        // Stamp the tier before any link work: the AppState effect below
+        // only runs after React commits this render, and a connect that
+        // starts while backgrounded (state-restoration relaunch, launch
+        // reconnect with the phone locked) must come up degraded, not
+        // start the chatty tilt monitor and have the effect kill it later.
+        instance.setBackgrounded(AppState.currentState === 'background');
         deviceRef.current = instance;
         setDevice(instance);
         deviceUnsubscribeRef.current?.();
@@ -333,6 +340,25 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     rememberedRef.current = null;
     setRemembered(null);
   }, []);
+
+  // Tiered background fidelity (Phase 10.2, ADR-008): the device drops its
+  // chatty tilt stream while the app is backgrounded and restarts it on
+  // foreground. Only the two settled AppState values flip the tier —
+  // 'inactive' is a transient iOS state (app switcher, system sheets,
+  // incoming call) and reacting to it would churn a BLE subscription for a
+  // moment's peek at the notification shade.
+  useEffect(() => {
+    if (!device) {
+      return;
+    }
+    device.setBackgrounded(AppState.currentState === 'background');
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'active') {
+        device.setBackgrounded(state === 'background');
+      }
+    });
+    return () => subscription.remove();
+  }, [device]);
 
   useEffect(
     () => () => {

@@ -28,9 +28,11 @@ import {
   dumpReadableCharacteristics,
   monitorAllNotifiables,
 } from '@/device/devHarness';
-import type { PostureStatus } from '@/device/types';
+import type { DeviceOdometer, PostureStatus } from '@/device/types';
+import type { UprightGoDevice } from '@/device/UprightGoDevice';
 import { useDevice } from '@/hooks/useDevice';
 import { usePosture } from '@/hooks/usePosture';
+import { useSessionStats } from '@/hooks/useSessionStats';
 import { useTilt } from '@/hooks/useTilt';
 import { useVitals } from '@/hooks/useVitals';
 
@@ -43,7 +45,7 @@ const POSTURE_LINE: Record<PostureStatus, { label: string; color: string }> = {
   },
 };
 
-type PendingAction = 'vibration' | 'pause' | 'disconnect' | null;
+type PendingAction = 'vibration' | 'pause' | 'disconnect' | 'forget' | null;
 
 /**
  * Compact battery state beside the "Connected" label: glyph picked from the
@@ -87,7 +89,8 @@ function BatteryIndicator({
 
 export default function ConnectedScreen() {
   const router = useRouter();
-  const { device, connectionState, bluetoothOff, disconnect } = useDevice();
+  const { device, connectionState, bluetoothOff, disconnect, forgetDevice } =
+    useDevice();
   const posture = usePosture();
   const vitals = useVitals();
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
@@ -241,6 +244,21 @@ export default function ConnectedScreen() {
     }
   };
 
+  // Forget lives with Disconnect (Phase 9.1): dropping the remembered
+  // device only makes sense while also ending the session — otherwise the
+  // provider would just re-remember on the next action. Forget first: it is
+  // the user's primary intent and must stick even if the disconnect fails.
+  const handleForget = async () => {
+    setPendingAction('forget');
+    forgetDevice();
+    try {
+      await disconnect();
+    } catch {
+      setPendingAction(null);
+      setLastAction({ ok: false, text: 'Couldn’t disconnect. Try again.' });
+    }
+  };
+
   const busy = pendingAction !== null;
   const actionsDisabled = busy || connectionState !== 'connected';
   const postureLine = POSTURE_LINE[posture];
@@ -339,6 +357,8 @@ export default function ConnectedScreen() {
           </View>
         )}
         <TiltCaption visible={!reconnecting && !deviceOff} />
+        <TodayStatsCaption visible={!reconnecting} />
+        <PostureTimeline visible={!reconnecting} />
         {/* Training = slouch vibration on; Tracking = senses only. The
             device's own taxonomy — never "paused/resumed" in UI copy. */}
         {!reconnecting && vitals.paused !== null && (
@@ -492,6 +512,9 @@ export default function ConnectedScreen() {
               </View>
             </View>
           </Card>
+          {device && connectionState === 'connected' && (
+            <DeviceInfoCard device={device} />
+          )}
         </Animated.View>
       )}
 
@@ -538,6 +561,26 @@ export default function ConnectedScreen() {
           disabled={busy}
           onPress={() => void handleDisconnect()}
         />
+        {/* Quiet caption action, About-link pattern: plain Disconnect keeps
+            the device remembered for the next launch's auto-reconnect;
+            this is the escape from that behavior. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Forget this device and disconnect"
+          disabled={busy}
+          onPress={() => void handleForget()}
+          hitSlop={8}
+          style={({ pressed }) => [
+            styles.forgetLink,
+            (pressed || busy) && styles.forgetLinkDim,
+          ]}
+        >
+          <Text style={Type.caption}>
+            {pendingAction === 'forget'
+              ? 'Forgetting…'
+              : 'Forget this device'}
+          </Text>
+        </Pressable>
         <Disclaimer />
       </View>
       </ScrollView>
@@ -560,6 +603,261 @@ function TiltCaption({ visible }: { visible: boolean }) {
   return (
     <Text style={[Type.caption, styles.tiltLine]}>
       Forward tilt: about {tilt}°
+    </Text>
+  );
+}
+
+/** Human form for the odometer's minute/second counts, e.g. "41 h 12 min". */
+function formatDuration(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`;
+}
+
+/**
+ * Lifetime device counters behind More tools (Phase 9.3). Read once when
+ * the disclosure mounts this card — on-demand data, not a subscription.
+ * Copy hedges with "about": both decodes are single-session/probable
+ * until the hardware confirmation walk (docs/protocol.html).
+ */
+function DeviceInfoCard({ device }: { device: UprightGoDevice }) {
+  const [odometer, setOdometer] = useState<DeviceOdometer | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    device
+      .readOdometer()
+      .then((value) => {
+        if (!cancelled) {
+          setOdometer(value);
+        }
+      })
+      .catch(() => {
+        // Not connected (raced a drop) — render nothing; the card
+        // disappears with the disclosure on the next state change anyway.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [device]);
+
+  const lines = odometer
+    ? [
+        odometer.connectionCount !== null &&
+          `Connected about ${odometer.connectionCount} times so far`,
+        odometer.lifetimeMinutes !== null &&
+          `About ${formatDuration(odometer.lifetimeMinutes)} of use in total`,
+        odometer.uptimeSeconds !== null &&
+          `On for ${formatDuration(Math.floor(odometer.uptimeSeconds / 60))} since last power-on`,
+      ].filter((line): line is string => Boolean(line))
+    : [];
+  if (lines.length === 0) {
+    return null;
+  }
+  return (
+    <Card>
+      <View style={styles.statusRow}>
+        <View
+          style={styles.statusBadge}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          <MaterialIcons
+            name="history"
+            size={28}
+            color={Palette.primaryCharcoal}
+          />
+        </View>
+        <View style={styles.statusSummary} accessible>
+          <Text style={Type.title}>This device</Text>
+          {lines.map((line) => (
+            <Text key={line} style={Type.caption}>
+              {line}
+            </Text>
+          ))}
+        </View>
+      </View>
+    </Card>
+  );
+}
+
+function minuteOfDayNow(): number {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
+}
+
+/**
+ * One hour of the timeline: 60 minute slots over an hour label. Memoized
+ * on its flags substring so past hours skip re-rendering on every tick —
+ * only the current hour's block changes.
+ */
+const TimelineHour = React.memo(function TimelineHour({
+  flags,
+  label,
+}: {
+  flags: string;
+  label: string;
+}) {
+  return (
+    <View style={styles.timelineHour}>
+      <View style={styles.timelineRow}>
+        {Array.from(flags, (flag, index) => (
+          <View
+            key={index}
+            style={[
+              styles.timelineSlot,
+              flag === 'u' && styles.timelineUpright,
+              flag === 's' && styles.timelineSlouched,
+            ]}
+          />
+        ))}
+      </View>
+      <Text style={Type.caption}>{label}</Text>
+    </View>
+  );
+});
+
+/**
+ * Full-day posture strip, horizontally scrollable by hour: one slot per
+ * minute, upright = short green, slouched = tall red, no data (off,
+ * unworn, gap) = faint dot. Height differences carry the meaning
+ * alongside color (never color alone — docs/product.html); the legend
+ * names them and the whole element reads as one day summary to screen
+ * readers. History-only by design (the live "Posture:" line above is the
+ * real-time cue); the provider backfills tick-cadence gaps. Starts at the
+ * first recorded hour (earlier minutes are dots by physics — the device
+ * keeps no history to backfill from) and follows "now" unless the user
+ * has scrolled back.
+ */
+function PostureTimeline({ visible }: { visible: boolean }) {
+  const stats = useSessionStats();
+  const [nowMinute, setNowMinute] = useState(minuteOfDayNow);
+  useEffect(() => {
+    // Same-value updates bail out of re-rendering, so this only costs a
+    // render once per minute boundary.
+    const interval = setInterval(() => setNowMinute(minuteOfDayNow()), 10_000);
+    return () => clearInterval(interval);
+  }, []);
+  const scrollRef = useRef<ScrollView>(null);
+  // Follow the growing edge only while the user is already there —
+  // yanking them mid-scrollback once a minute would be hostile.
+  const atEndRef = useRef(true);
+
+  const flags = stats.minuteFlags;
+  let firstRecorded = -1;
+  let uprightCount = 0;
+  let slouchedCount = 0;
+  for (let minute = 0; minute < flags.length; minute += 1) {
+    if (flags[minute] === 'u' || flags[minute] === 's') {
+      if (firstRecorded === -1) {
+        firstRecorded = minute;
+      }
+      if (flags[minute] === 'u') {
+        uprightCount += 1;
+      } else {
+        slouchedCount += 1;
+      }
+    }
+  }
+  if (!visible || firstRecorded === -1) {
+    return null;
+  }
+
+  const endMinute = Math.max(nowMinute, flags.length - 1);
+  const hours: { label: string; flags: string }[] = [];
+  for (
+    let hour = Math.floor(firstRecorded / 60);
+    hour <= Math.floor(endMinute / 60);
+    hour += 1
+  ) {
+    const hourStart = hour * 60;
+    const hourEnd = Math.min(hourStart + 59, endMinute);
+    let hourFlags = '';
+    for (let minute = hourStart; minute <= hourEnd; minute += 1) {
+      const flag = flags[minute];
+      hourFlags += flag === 'u' || flag === 's' ? flag : '.';
+    }
+    hours.push({ label: `${String(hour).padStart(2, '0')}:00`, flags: hourFlags });
+  }
+
+  return (
+    <View
+      accessible
+      accessibilityLabel={`Posture timeline for today: ${uprightCount} ${
+        uprightCount === 1 ? 'minute' : 'minutes'
+      } upright, ${slouchedCount} ${
+        slouchedCount === 1 ? 'minute' : 'minutes'
+      } slouching`}
+      style={styles.timeline}
+    >
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        scrollEventThrottle={100}
+        onScroll={(event) => {
+          const { contentOffset, layoutMeasurement, contentSize } =
+            event.nativeEvent;
+          atEndRef.current =
+            contentOffset.x + layoutMeasurement.width >=
+            contentSize.width - 24;
+        }}
+        onContentSizeChange={() => {
+          if (atEndRef.current) {
+            scrollRef.current?.scrollToEnd({ animated: false });
+          }
+        }}
+      >
+        <View style={styles.timelineHours}>
+          {hours.map((hourBlock) => (
+            <TimelineHour
+              key={hourBlock.label}
+              flags={hourBlock.flags}
+              label={hourBlock.label}
+            />
+          ))}
+        </View>
+      </ScrollView>
+      <Text style={Type.caption}>
+        Today · green low: upright · red tall: slouching
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * Today's aac9-accumulated stats in one caption line (Phase 9.2) — the
+ * humble V1 surface, deliberately not a dashboard. Hidden until the first
+ * worn minute lands, so a fresh day never opens with "0% upright". A leaf
+ * subscriber like TiltCaption: ticks arrive every ~60 s, so re-render cost
+ * is irrelevant, but screen-level state would still be the wrong altitude.
+ * Not a live region — a once-a-minute announcement would be noise.
+ */
+function TodayStatsCaption({ visible }: { visible: boolean }) {
+  const stats = useSessionStats();
+  if (!visible || stats.postureTicks === 0) {
+    return null;
+  }
+  // Time-based: measured slouched seconds over worn-connected time
+  // (postureTicks ≈ worn minutes). Clamped — crediting granularity can
+  // momentarily put the numerator ahead of the tick-based denominator.
+  const uprightPercent = Math.min(
+    100,
+    Math.max(
+      0,
+      Math.round(
+        (1 - stats.slouchedSeconds / (stats.postureTicks * 60)) * 100,
+      ),
+    ),
+  );
+  const time = formatDuration(stats.connectedTicks);
+  const slouches =
+    stats.slouchCount === 1 ? '1 slouch' : `${stats.slouchCount} slouches`;
+  return (
+    <Text
+      style={[Type.caption, styles.tiltLine]}
+      accessibilityLabel={`Today: ${uprightPercent} percent upright, ${slouches}, ${time} connected`}
+    >
+      Today: {uprightPercent}% upright · {slouches} · {time} connected
     </Text>
   );
 }
@@ -627,7 +925,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   toolsTogglePressed: {
-    opacity: 0.6,
+    opacity: Layout.pressedOpacity,
   },
   toolsBody: {
     gap: Layout.componentGap,
@@ -685,6 +983,38 @@ const styles = StyleSheet.create({
   tiltLine: {
     marginTop: 4,
   },
+  timeline: {
+    marginTop: 8,
+    gap: 4,
+  },
+  timelineHours: {
+    flexDirection: 'row',
+    // Matches the intra-hour slot gap so hour boundaries are seamless.
+    gap: 1,
+  },
+  timelineHour: {
+    gap: 2,
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 1,
+    height: 16,
+  },
+  timelineSlot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1,
+    backgroundColor: Palette.borderDivider,
+  },
+  timelineUpright: {
+    height: 8,
+    backgroundColor: Palette.successGreen,
+  },
+  timelineSlouched: {
+    height: 16,
+    backgroundColor: Palette.errorRed,
+  },
   calloutCard: {
     backgroundColor: Palette.softAmber,
     borderColor: Palette.accentAmber,
@@ -701,5 +1031,13 @@ const styles = StyleSheet.create({
   footer: {
     marginTop: Layout.sectionGap - Layout.componentGap,
     gap: Layout.componentGap,
+  },
+  forgetLink: {
+    alignSelf: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  forgetLinkDim: {
+    opacity: Layout.pressedOpacity,
   },
 });

@@ -26,4 +26,6 @@ export const Layout = {
   radiusCard: 22,
   radiusButton: 16,
   radiusIconTile: 18,
+  /** Pressed-state dim for Pressable feedback, app-wide. */
+  pressedOpacity: 0.6,
 } as const;

@@ -68,6 +68,48 @@ export function onAdapterStateChange(
   return () => subscription.remove();
 }
 
+/**
+ * Resolve true once the adapter reaches 'poweredOn'. iOS always reports
+ * 'unknown' for a moment after BleManager creation (hardware-observed,
+ * Phase 1), so any BLE call made straight after a cold start must wait on
+ * this first — scanForDevices has its own equivalent gate. Resolves false
+ * on a terminal state (off/unauthorized/unsupported) or on timeout;
+ * transient 'unknown'/'resetting' keep waiting.
+ */
+export function waitForAdapterPoweredOn(timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let unsubscribe: Unsubscribe | null = null;
+    const settle = (ready: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      unsubscribe?.();
+      resolve(ready);
+    };
+    const timer = setTimeout(() => settle(false), timeoutMs);
+    unsubscribe = onAdapterStateChange((state) => {
+      if (state === 'poweredOn') {
+        settle(true);
+      } else if (
+        state === 'poweredOff' ||
+        state === 'unauthorized' ||
+        state === 'unsupported'
+      ) {
+        settle(false);
+      }
+    });
+    // The registration emits the current state immediately; if that
+    // emission settled us synchronously, the unsubscribe above ran while
+    // still null — release the subscription now.
+    if (settled) {
+      unsubscribe();
+    }
+  });
+}
+
 function toAdapterState(state: State): AdapterState {
   switch (state) {
     case State.PoweredOn:

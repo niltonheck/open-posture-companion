@@ -80,4 +80,40 @@ export interface DeviceVitals {
   paused: boolean | null;
 }
 
+/**
+ * One decoded aac9 tick — the device's per-minute telemetry summary,
+ * emitted every ~60 s while connected (docs/protocol.html, TODO 5.8).
+ * An event, not state: there is no "current" tick to replay to a late
+ * subscriber.
+ */
+export interface TelemetryTick {
+  /** Wearer was past the slouch threshold at tick time. */
+  slouched: boolean;
+  /** Tracking (pause) mode was active at tick time. */
+  paused: boolean;
+  /** Slouch excursions during the preceding interval (counts while paused too). */
+  excursions: number;
+  /**
+   * Worn state (aac3) at tick time, stamped by the device layer so every
+   * consumer gates on one definition of a countable minute; null before
+   * the priming read lands.
+   */
+  worn: boolean | null;
+}
+
+/**
+ * Lifetime counters read from the device on demand (Phase 9.3). Decodes
+ * are single-session/probable (docs/protocol.html) — present as estimates
+ * until the hardware confirmation walk. Fields are null when the source
+ * characteristic couldn't be read or was shorter than expected.
+ */
+export interface DeviceOdometer {
+  /** aae1[0..1]: connections since manufacture (probable). */
+  connectionCount: number | null;
+  /** aae1[2..3]: lifetime powered-on minutes (probable). */
+  lifetimeMinutes: number | null;
+  /** aac5: seconds since the last power-on (probable; stored as deciseconds). */
+  uptimeSeconds: number | null;
+}
+
 export type Unsubscribe = () => void;

@@ -4,10 +4,12 @@ import React from 'react';
 
 import { Palette } from '@/constants/palette';
 import { DeviceProvider } from '@/hooks/useDevice';
+import { SessionStatsProvider } from '@/hooks/useSessionStats';
 
 export default function RootLayout() {
   return (
     <DeviceProvider>
+      <SessionStatsProvider>
       <StatusBar style="dark" />
       <Stack
         screenOptions={{
@@ -36,7 +38,9 @@ export default function RootLayout() {
         />
         {/* In-page back arrow + centered title per the calibrate mockup. */}
         <Stack.Screen name="calibrate" options={{ headerShown: false }} />
+        <Stack.Screen name="about" options={{ headerShown: false }} />
       </Stack>
+      </SessionStatsProvider>
     </DeviceProvider>
   );
 }

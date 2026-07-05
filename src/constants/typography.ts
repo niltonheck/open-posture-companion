@@ -34,4 +34,14 @@ export const Type = StyleSheet.create({
     lineHeight: 18,
     color: Palette.secondarySlate,
   },
+  /**
+   * Centered in-page header title — 20/700/26. Promoted to a token when it
+   * recurred (calibrate, about) per the design log's wordmark precedent.
+   */
+  pageTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    lineHeight: 26,
+    color: Palette.primaryCharcoal,
+  },
 });

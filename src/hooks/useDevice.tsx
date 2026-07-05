@@ -24,6 +24,7 @@ import {
   getBleManager,
   onAdapterStateChange,
   requestBlePermissions,
+  waitForAdapterPoweredOn,
 } from '@/device/manager';
 import { scanForDevices, type ScanHandle } from '@/device/scan';
 import type {
@@ -34,6 +35,12 @@ import type {
   Unsubscribe,
 } from '@/device/types';
 import { UprightGoDevice } from '@/device/UprightGoDevice';
+import {
+  forgetRememberedDevice,
+  getRememberedDevice,
+  rememberDevice,
+  type RememberedDevice,
+} from '@/storage/rememberedDevice';
 
 /**
  * Scan lifecycle, kept separate from ConnectionState so screens can tell
@@ -41,6 +48,13 @@ import { UprightGoDevice } from '@/device/UprightGoDevice';
  * screen's empty/timeout states).
  */
 export type ScanStatus = 'idle' | 'scanning' | 'timed_out' | 'error';
+
+/**
+ * How long the launch reconnect waits for the adapter to leave iOS's
+ * post-creation 'unknown' state. Normally settles in well under a second;
+ * a radio that's actually off resolves immediately as a definitive state.
+ */
+const ADAPTER_WAIT_MS = 5_000;
 
 export interface DeviceContextValue {
   /** Composed connection state machine from docs/architecture.html. */
@@ -57,10 +71,28 @@ export interface DeviceContextValue {
    * scan see false regardless of the real adapter state.
    */
   bluetoothOff: boolean;
+  /**
+   * The last successfully connected device, persisted across launches
+   * (Phase 9.1); null until one connect succeeds or after forgetDevice().
+   */
+  rememberedDevice: RememberedDevice | null;
   startScan: () => void;
   stopScan: () => void;
-  connect: (target: DiscoveredDevice) => Promise<void>;
+  /** Only id/name matter for connecting; scan metadata is display-only. */
+  connect: (target: Pick<DiscoveredDevice, 'id' | 'name'>) => Promise<void>;
   disconnect: () => Promise<void>;
+  /**
+   * Direct connect to the remembered device, skipping the scan flow.
+   * 'failed' covers nothing-remembered, missing permission, and connect
+   * errors — callers fall back to the normal scan flow. 'cancelled' means
+   * cancelReconnectToRemembered() (or a new scan) superseded the attempt,
+   * including its pre-connect await window — callers stay quiet.
+   */
+  reconnectToRemembered: () => Promise<'connected' | 'failed' | 'cancelled'>;
+  /** Abandon an in-flight reconnectToRemembered (pair with disconnect()). */
+  cancelReconnectToRemembered: () => void;
+  /** Drop the persisted device; does not touch a live connection. */
+  forgetDevice: () => void;
 }
 
 const DeviceContext = createContext<DeviceContextValue | null>(null);
@@ -111,8 +143,19 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [scanStatus, setScanStatus] = useState<ScanStatus>('idle');
   const [devices, setDevices] = useState<DiscoveredDevice[]>([]);
   const [device, setDevice] = useState<UprightGoDevice | null>(null);
+  // Lazy initializer: one sync kv-store read at provider mount (no BLE).
+  const [remembered, setRemembered] = useState<RememberedDevice | null>(
+    getRememberedDevice,
+  );
 
   const deviceRef = useRef<UprightGoDevice | null>(null);
+  // Mirrors `remembered` for callbacks — one in-memory source of truth so
+  // connect()/reconnectToRemembered() neither re-read storage nor churn
+  // their useCallback identities on every remembered change.
+  const rememberedRef = useRef<RememberedDevice | null>(remembered);
+  // Bumped to abandon an in-flight reconnectToRemembered across its await
+  // points (before connect() exists there is no device to disconnect).
+  const reconnectSessionRef = useRef(0);
   const scanRef = useRef<ScanHandle | null>(null);
   // Bumped on every start/stop so a startScan suspended on the permission
   // prompt can tell it was superseded (its scan handle doesn't exist yet,
@@ -128,31 +171,46 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     setScanStatus((status) => (status === 'scanning' ? 'idle' : status));
   }, []);
 
+  // iOS never reports a permission denial from requestBlePermissions; it
+  // shows up as adapter state 'unauthorized' instead, so this watch is the
+  // real permission signal there. Started on the first BLE-touching action
+  // (scan or launch reconnect), never at mount.
+  const ensureAdapterWatch = useCallback(() => {
+    adapterUnsubscribeRef.current ??= onAdapterStateChange((state) => {
+      setAdapterState(state);
+      if (state === 'poweredOff') {
+        // Entries found before the radio went off may be gone when it
+        // returns — never leave them rendered and tappable.
+        setDevices([]);
+      }
+    });
+  }, []);
+
   const startScan = useCallback(() => {
+    // A user-initiated scan supersedes any in-flight launch reconnect,
+    // whatever path started the scan.
+    reconnectSessionRef.current += 1;
     const session = (scanSessionRef.current += 1);
     // Clear synchronously — the previous scan's entries must not stay
     // rendered (and tappable) while the permission request below is
     // pending; a stale entry may no longer be reachable.
     setDevices([]);
+    // 'scanning' from the moment of the user action: the permission-prompt
+    // window is part of the scan from the UI's point of view, and screens
+    // must never present an in-progress scan as finished ("Scan again").
+    setScanStatus('scanning');
     void (async () => {
       const granted = await requestBlePermissions();
       setPermissionDenied(!granted);
       if (!granted || scanSessionRef.current !== session) {
+        // Only unwind our own status — a superseding session owns it now.
+        if (scanSessionRef.current === session) {
+          setScanStatus('idle');
+        }
         return;
       }
-      // iOS never reports a permission denial from requestBlePermissions; it
-      // shows up as adapter state 'unauthorized' instead, so this watch is
-      // the real permission signal there. Started on first scan, not mount.
-      adapterUnsubscribeRef.current ??= onAdapterStateChange((state) => {
-        setAdapterState(state);
-        if (state === 'poweredOff') {
-          // Entries found before the radio went off may be gone when it
-          // returns — never leave them rendered and tappable.
-          setDevices([]);
-        }
-      });
+      ensureAdapterWatch();
       scanRef.current?.stop();
-      setScanStatus('scanning');
       scanRef.current = scanForDevices({
         onDevice: (found) =>
           setDevices((previous) => {
@@ -173,10 +231,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         onError: () => setScanStatus('error'),
       });
     })();
-  }, []);
+  }, [ensureAdapterWatch]);
 
   const connect = useCallback(
-    async (target: DiscoveredDevice) => {
+    async (target: Pick<DiscoveredDevice, 'id' | 'name'>) => {
       stopScan();
       let instance = deviceRef.current;
       if (!instance || instance.id !== target.id) {
@@ -194,12 +252,86 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       // The selection list is consumed by a successful connect; keeping it
       // would resurrect 'device_found' after a later disconnect.
       setDevices([]);
+      // Remember for the next launch's direct reconnect (Phase 9.1) —
+      // skipped when unchanged (every launch reconnect comes through here).
+      const previous = rememberedRef.current;
+      if (previous?.id !== target.id || previous.name !== target.name) {
+        const entry = { id: target.id, name: target.name };
+        rememberDevice(entry);
+        rememberedRef.current = entry;
+        setRemembered(entry);
+      }
     },
     [stopScan],
   );
 
   const disconnect = useCallback(async () => {
     await deviceRef.current?.disconnect();
+  }, []);
+
+  const cancelReconnectToRemembered = useCallback(() => {
+    reconnectSessionRef.current += 1;
+  }, []);
+
+  const reconnectToRemembered = useCallback(async (): Promise<
+    'connected' | 'failed' | 'cancelled'
+  > => {
+    const session = (reconnectSessionRef.current += 1);
+    const target = rememberedRef.current;
+    if (!target) {
+      return 'failed';
+    }
+    // Same permission gate as scanning: a no-op when already granted, and
+    // the graceful path when Android permissions were revoked since the
+    // device was remembered. (Remembering implies a past grant, so no
+    // first-run prompt appears here.)
+    const granted = await requestBlePermissions();
+    setPermissionDenied(!granted);
+    if (!granted) {
+      return 'failed';
+    }
+    // Cancelled while suspended above — there was no device instance yet,
+    // so the caller's disconnect() had nothing to abort; bail here instead
+    // of starting a connect the user has moved on from.
+    if (reconnectSessionRef.current !== session) {
+      return 'cancelled';
+    }
+    ensureAdapterWatch();
+    // Cold launch means a freshly created BleManager, and iOS reports
+    // adapter state 'unknown' for a moment after creation (Phase 1 —
+    // "BluetoothLE is in unknown state" on any immediate call). The scan
+    // path has its own gate inside scanForDevices; this direct-connect
+    // path must wait the same way.
+    const adapterReady = await waitForAdapterPoweredOn(ADAPTER_WAIT_MS);
+    if (reconnectSessionRef.current !== session) {
+      return 'cancelled';
+    }
+    if (!adapterReady) {
+      return 'failed';
+    }
+    try {
+      await connect(target);
+      if (reconnectSessionRef.current !== session) {
+        // Cancel landed while connecting but the attempt still won the
+        // race — release the link (a connected device stops advertising
+        // and the user is off scanning for it).
+        await deviceRef.current?.disconnect();
+        return 'cancelled';
+      }
+      return 'connected';
+    } catch (error) {
+      if (reconnectSessionRef.current !== session) {
+        return 'cancelled';
+      }
+      console.log('[useDevice] launch reconnect failed:', error);
+      return 'failed';
+    }
+  }, [connect, ensureAdapterWatch]);
+
+  const forgetDevice = useCallback(() => {
+    forgetRememberedDevice();
+    rememberedRef.current = null;
+    setRemembered(null);
   }, []);
 
   useEffect(
@@ -233,10 +365,14 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       devices,
       device,
       bluetoothOff,
+      rememberedDevice: remembered,
       startScan,
       stopScan,
       connect,
       disconnect,
+      reconnectToRemembered,
+      cancelReconnectToRemembered,
+      forgetDevice,
     }),
     [
       connectionState,
@@ -244,10 +380,14 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       devices,
       device,
       bluetoothOff,
+      remembered,
       startScan,
       stopScan,
       connect,
       disconnect,
+      reconnectToRemembered,
+      cancelReconnectToRemembered,
+      forgetDevice,
     ],
   );
 

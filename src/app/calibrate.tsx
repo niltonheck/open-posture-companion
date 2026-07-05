@@ -2,19 +2,13 @@ import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import {
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ActionButton } from '@/components/action-button';
 import { Card } from '@/components/card';
 import { Disclaimer } from '@/components/disclaimer';
+import { PageHeader } from '@/components/page-header';
 import { Layout, Palette } from '@/constants/palette';
 import { Type } from '@/constants/typography';
 import { useDevice } from '@/hooks/useDevice';
@@ -92,25 +86,8 @@ export default function CalibrateScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Native header is hidden (_layout.tsx); iOS swipe-back still works. */}
-      <View style={styles.pageHeader}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back"
-          onPress={() => router.back()}
-          hitSlop={12}
-          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-        >
-          <MaterialIcons
-            name="arrow-back"
-            size={28}
-            color={Palette.primaryCharcoal}
-          />
-        </Pressable>
-        <Text style={styles.pageTitle} accessibilityRole="header">
-          Calibrate posture
-        </Text>
-      </View>
+      {/* Native header is hidden (_layout.tsx). */}
+      <PageHeader title="Calibrate posture" />
       <ScrollView contentContainerStyle={styles.content}>
         {flow === 'done' ? (
           <Card>
@@ -227,26 +204,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  pageHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: Layout.pagePadding,
-    paddingVertical: Layout.componentGap,
-  },
-  backButton: {
-    position: 'absolute',
-    left: Layout.pagePadding,
-  },
-  pressed: {
-    opacity: 0.6,
-  },
-  pageTitle: {
-    fontSize: 20,
-    lineHeight: 26,
-    fontWeight: '700',
-    color: Palette.primaryCharcoal,
-  },
   content: {
     padding: Layout.pagePadding,
     paddingTop: Layout.componentGap,
@@ -256,15 +213,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Layout.componentGap,
-    paddingVertical: Layout.sectionGap,
+    paddingTop: Layout.sectionGap,
+    // The figure's ground line sits near the card's bottom edge (mockup).
+    paddingBottom: 10,
   },
   heroText: {
     flex: 1,
+    // Between title and display — the mockup's hero copy is ~21pt.
+    fontSize: 21,
+    lineHeight: 29,
+    // Text block floats around the card's middle while the image bottoms out.
+    marginBottom: Layout.sectionGap,
   },
   heroImage: {
     // 3x asset is 423x660 — keep the aspect to avoid resampling distortion.
     width: 141,
     height: 220,
+    alignSelf: 'flex-end',
   },
   buttonIcon: {
     width: 20,
@@ -296,7 +261,6 @@ const styles = StyleSheet.create({
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: Palette.borderDivider,
-    marginLeft: 40 + Layout.componentGap,
   },
   doneTitle: {
     color: Palette.successGreen,

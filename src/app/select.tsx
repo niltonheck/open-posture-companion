@@ -200,6 +200,9 @@ export default function SelectDeviceScreen() {
   };
 
   const permissionNeeded = connectionState === 'permission_needed';
+  // Covers the OS-permission-prompt window too: startScan marks 'scanning'
+  // synchronously, so the footer never presents an in-progress scan as
+  // finished ("Scan again").
   const scanning = scanStatus === 'scanning';
   // With permission missing or the radio off, entries can't be reached —
   // don't leave them rendered and tappable.
@@ -250,15 +253,11 @@ export default function SelectDeviceScreen() {
         </Card>
       );
     }
-    // 'scanning' — or 'idle' while the mount-time startScan is still
-    // waiting on the permission prompt; either way a scan is underway or
-    // imminent, so never claim "no devices found" here.
-    return (
-      <View style={styles.scanningRow}>
-        <BluetoothPulse size={22} color={Palette.secondarySlate} />
-        <Text style={Type.body}>Scanning for devices…</Text>
-      </View>
-    );
+    // 'scanning' (which includes the permission-prompt window — startScan
+    // marks it synchronously): never claim "no devices found" mid-scan.
+    // The footer's "Scanning…" button (pulsing glyph) already reports the
+    // in-progress state — a second message here would duplicate it.
+    return null;
   };
 
   return (
@@ -316,7 +315,7 @@ export default function SelectDeviceScreen() {
                 only way to re-trigger the permission prompt after an Android
                 denial, which leaves scanStatus 'idle'. */}
             <ActionButton
-              label={scanning ? 'Scanning…' : 'Scan again'}
+              label={scanning ? 'Scanning for devices…' : 'Scan again'}
               accessibilityLabel={
                 scanning ? 'Scanning for devices' : 'Scan for devices'
               }
@@ -353,7 +352,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   pressed: {
-    opacity: 0.6,
+    opacity: Layout.pressedOpacity,
   },
   pageHeader: {
     gap: 4,
@@ -393,13 +392,6 @@ const styles = StyleSheet.create({
   deviceInfo: {
     flex: 1,
     gap: 2,
-  },
-  scanningRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingVertical: Layout.sectionGap,
   },
   connectError: {
     color: Palette.errorRed,

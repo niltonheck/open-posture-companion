@@ -15,12 +15,15 @@ import {
   Characteristic,
   Command,
   SERVICE_BY_CHARACTERISTIC,
+  Telemetry,
 } from './characteristics';
 import { base64ToBytes, bytesToBase64, bytesToHex } from './encoding';
 import type {
   DeviceConnectionState,
+  DeviceOdometer,
   DeviceVitals,
   PostureStatus,
+  TelemetryTick,
   Unsubscribe,
 } from './types';
 
@@ -75,6 +78,33 @@ const RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000];
  */
 const TILT_MONITOR_MAX_RESTARTS = 2;
 const TILT_MONITOR_RESTART_DELAY_MS = 1_000;
+
+/**
+ * Same transient-death recovery for the aac9 telemetry monitor: a frozen
+ * telemetry stream silently stops the session stats for the rest of the
+ * link, which is worse than a frozen tilt line because nothing on screen
+ * hints at it.
+ */
+const TELEMETRY_MONITOR_MAX_RESTARTS = 2;
+
+/**
+ * How long the wearer must stay past the slouch threshold before a slouch
+ * event is emitted. App-side counting exists because aac9's excursion
+ * counter is Training-mode-only (hardware-corrected 2026-07-04); the dwell
+ * filters momentary dips (leaning to reach something) that the device's
+ * raw crossing counter would have counted. 5 s chosen by the product owner
+ * to track the perceived buzz delay. (Note: the one instrumented aac4
+ * observation measured ~57 s threshold→buzz — if the count ever feels off
+ * against real buzzes, re-measure that grace period before retuning this.)
+ */
+const SLOUCH_EVENT_DWELL_MS = 5_000;
+
+/**
+ * Ongoing slouched time is credited to listeners in chunks this often, so
+ * an hour-long slouch shows up in the day's upright % as it happens, not
+ * only when the wearer finally straightens.
+ */
+const SLOUCH_TIME_FLUSH_MS = 60_000;
 
 /**
  * LiPo open-circuit voltage → remaining-charge curve (single 4.2 V cell,
@@ -140,6 +170,7 @@ export class UprightGoDevice {
   private tiltMonitorRestarts = 0;
   /** Dev-only; the GATT tree can't change between links, log it once. */
   private gattTreeLogged = false;
+  private telemetryMonitorRestarts = 0;
   /**
    * Last vibration command sent. A drop mid-pulse strands the motor
    * buzzing (firmware runs it until an off command), so reconnect restores
@@ -148,8 +179,15 @@ export class UprightGoDevice {
   private motorOn = false;
   private readonly postureListeners = new Set<(status: PostureStatus) => void>();
   private lastEmittedPosture: PostureStatus | null = null;
+  private readonly slouchEventListeners = new Set<() => void>();
+  private slouchDwellTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly slouchTimeListeners = new Set<(milliseconds: number) => void>();
+  /** Start (or last flush) of the current countable-slouch segment. */
+  private slouchSegmentSince: number | null = null;
+  private slouchFlushTimer: ReturnType<typeof setInterval> | null = null;
   private vitals: DeviceVitals = EMPTY_VITALS;
   private readonly vitalsListeners = new Set<(vitals: DeviceVitals) => void>();
+  private readonly telemetryListeners = new Set<(tick: TelemetryTick) => void>();
   /** Latest aaca reading; null while disconnected. */
   private lastTiltDecidegrees: number | null = null;
   private readonly tiltListeners = new Set<(decidegrees: number | null) => void>();
@@ -269,8 +307,10 @@ export class UprightGoDevice {
     }
     this.gattReady = true;
     this.tiltMonitorRestarts = 0;
+    this.telemetryMonitorRestarts = 0;
     this.startTiltMonitor();
     this.startVitalsMonitors();
+    this.startTelemetryMonitor();
     // Fire-and-forget so the extra GATT reads never delay 'connected':
     // adopt the stored calibration (aab2/aab3) and prime the vitals with
     // initial reads (their notifies only fire on change).
@@ -602,6 +642,10 @@ export class UprightGoDevice {
 
   private setVitals(partial: Partial<DeviceVitals>): void {
     this.vitals = { ...this.vitals, ...partial };
+    // Worn is half of the countable-slouch composite (taking the device
+    // off mid-slouch must close the time segment even though the tilt
+    // stream keeps classifying 'slouching').
+    this.updateSlouchTimeTracking();
     for (const listener of this.vitalsListeners) {
       listener(this.vitals);
     }
@@ -621,6 +665,68 @@ export class UprightGoDevice {
     this.monitor(Characteristic.pauseMode, (bytes) =>
       this.setVitals({ paused: bytes[0] === Command.on }),
     );
+  }
+
+  /**
+   * Started per connection. Deliberately never primed with a read: aac9 is
+   * a rolling one-minute summary re-emitted every ~60 s, so a priming read
+   * would hand subscribers the same minute twice (characteristics.ts).
+   * Bounded restarts recover a stream that died without a link drop, like
+   * the tilt monitor — a dead aac9 monitor silently freezes session stats.
+   */
+  private startTelemetryMonitor(): void {
+    const epoch = this.linkEpoch;
+    this.monitor(
+      Characteristic.telemetry,
+      (bytes) => {
+        if (bytes.length < 1) {
+          return;
+        }
+        const tick: TelemetryTick = {
+          slouched: (bytes[0] & Telemetry.slouchedBit) !== 0,
+          paused: (bytes[0] & Telemetry.pausedBit) !== 0,
+          excursions: bytes[0] & Telemetry.excursionMask,
+          // Stamped here so every consumer shares one definition of a
+          // countable minute instead of correlating two async streams.
+          worn: this.vitals.worn,
+        };
+        if (__DEV__) {
+          console.log(`${TAG} aac9 tick: ${bytesToHex(bytes)}`, tick);
+        }
+        for (const listener of this.telemetryListeners) {
+          listener(tick);
+        }
+      },
+      () => {
+        if (epoch !== this.linkEpoch) {
+          return;
+        }
+        if (this.telemetryMonitorRestarts >= TELEMETRY_MONITOR_MAX_RESTARTS) {
+          return;
+        }
+        this.telemetryMonitorRestarts += 1;
+        setTimeout(() => {
+          if (epoch !== this.linkEpoch || !this.gattReady) {
+            return;
+          }
+          console.log(
+            `${TAG} restarting telemetry monitor (attempt ${this.telemetryMonitorRestarts})`,
+          );
+          this.startTelemetryMonitor();
+        }, TILT_MONITOR_RESTART_DELAY_MS);
+      },
+    );
+  }
+
+  /**
+   * Subscribe to the device's per-minute telemetry ticks (aac9). Unlike
+   * the state-shaped subscriptions above there is no immediate emission —
+   * ticks are events. Listeners survive reconnects (the monitor is
+   * re-created per connection).
+   */
+  onTelemetryTick(callback: (tick: TelemetryTick) => void): Unsubscribe {
+    this.telemetryListeners.add(callback);
+    return () => this.telemetryListeners.delete(callback);
   }
 
   /** Initial values — the notifies above only fire on change. */
@@ -692,9 +798,144 @@ export class UprightGoDevice {
       return;
     }
     this.lastEmittedPosture = status;
+    this.trackSlouchDwell(status);
+    this.updateSlouchTimeTracking();
     for (const listener of this.postureListeners) {
       listener(status);
     }
+  }
+
+  /**
+   * Subscribe to slouched-time credits in milliseconds: how long the
+   * wearer has actually been past the slouch threshold while worn,
+   * emitted when a slouch ends (or the device comes off / the link drops)
+   * and every SLOUCH_TIME_FLUSH_MS during an ongoing one. Time-based
+   * ground truth for the upright %, replacing the per-minute bit-7 point
+   * sample. Listeners survive reconnects.
+   */
+  onSlouchTime(callback: (milliseconds: number) => void): Unsubscribe {
+    this.slouchTimeListeners.add(callback);
+    return () => this.slouchTimeListeners.delete(callback);
+  }
+
+  /** Open/close the slouched-time segment when the composite state flips. */
+  private updateSlouchTimeTracking(): void {
+    const active =
+      this.lastEmittedPosture === 'slouching' && this.vitals.worn !== false;
+    if (active === (this.slouchSegmentSince !== null)) {
+      return; // Composite unchanged (e.g. a battery vitals update).
+    }
+    if (active) {
+      this.slouchSegmentSince = Date.now();
+      this.slouchFlushTimer = setInterval(
+        () => this.flushSlouchTime(),
+        SLOUCH_TIME_FLUSH_MS,
+      );
+    } else {
+      this.flushSlouchTime();
+      this.slouchSegmentSince = null;
+      if (this.slouchFlushTimer !== null) {
+        clearInterval(this.slouchFlushTimer);
+        this.slouchFlushTimer = null;
+      }
+    }
+  }
+
+  /** Credit the elapsed part of the current segment and re-baseline it. */
+  private flushSlouchTime(): void {
+    if (this.slouchSegmentSince === null) {
+      return;
+    }
+    const now = Date.now();
+    const elapsed = now - this.slouchSegmentSince;
+    this.slouchSegmentSince = now;
+    if (elapsed <= 0) {
+      return;
+    }
+    for (const listener of this.slouchTimeListeners) {
+      listener(elapsed);
+    }
+  }
+
+  /**
+   * Subscribe to sustained-slouch events: the wearer stayed past the
+   * slouch threshold for SLOUCH_EVENT_DWELL_MS while worn. Exists because
+   * aac9's own excursion counter only runs in Training mode
+   * (hardware-corrected 2026-07-04) — this works in both modes and filters
+   * momentary dips. One event per continuous slouch, however long; needs a
+   * calibration reference like everything posture-derived. Listeners
+   * survive reconnects.
+   */
+  onSlouchEvent(callback: () => void): Unsubscribe {
+    this.slouchEventListeners.add(callback);
+    return () => this.slouchEventListeners.delete(callback);
+  }
+
+  /** Called on every posture transition; owns the dwell timer. */
+  private trackSlouchDwell(status: PostureStatus): void {
+    if (this.slouchDwellTimer !== null) {
+      clearTimeout(this.slouchDwellTimer);
+      this.slouchDwellTimer = null;
+    }
+    if (status !== 'slouching') {
+      return; // Straightened up (or link dropped → 'unknown') before dwell.
+    }
+    const epoch = this.linkEpoch;
+    this.slouchDwellTimer = setTimeout(() => {
+      this.slouchDwellTimer = null;
+      // Worn checked at fire time, not arm time: a dangling device streams
+      // near-horizontal tilt that classifies as 'slouching' but is not the
+      // wearer's posture (aac3 lands within ~1 s of removal, well inside
+      // the dwell). null fails open, matching the shared worn policy.
+      if (
+        epoch === this.linkEpoch &&
+        this.lastEmittedPosture === 'slouching' &&
+        this.vitals.worn !== false
+      ) {
+        for (const listener of this.slouchEventListeners) {
+          listener();
+        }
+      }
+    }, SLOUCH_EVENT_DWELL_MS);
+  }
+
+  /**
+   * On-demand read of the device's lifetime counters (Phase 9.3):
+   * aae1 = [connection count][lifetime minutes], aac5 = uptime. Both
+   * decodes are single-session/probable (docs/protocol.html) — the UI
+   * presents them as estimates. Per-field null on a failed read; rejects
+   * only when not connected.
+   */
+  async readOdometer(): Promise<DeviceOdometer> {
+    if (!this.gattReady) {
+      throw new Error(`Cannot read device info while ${this.state}`);
+    }
+    const odometer: DeviceOdometer = {
+      connectionCount: null,
+      lifetimeMinutes: null,
+      uptimeSeconds: null,
+    };
+    try {
+      const counters = await this.read(Characteristic.odometer);
+      if (counters.length >= 4) {
+        odometer.connectionCount = counters[0] | (counters[1] << 8);
+        odometer.lifetimeMinutes = counters[2] | (counters[3] << 8);
+      }
+    } catch (error) {
+      console.log(`${TAG} odometer read failed:`, error);
+    }
+    try {
+      const uptime = await this.read(Characteristic.uptime);
+      if (uptime.length >= 4) {
+        const deciseconds =
+          (uptime[0] | (uptime[1] << 8) | (uptime[2] << 16)) +
+          uptime[3] * 0x1000000;
+        odometer.uptimeSeconds = Math.floor(deciseconds / 10);
+      }
+    } catch (error) {
+      console.log(`${TAG} uptime read failed:`, error);
+    }
+    return odometer;
   }
 
   /** Subscribe to the physical button (aac6, toggles 0x01/0x00 per press). */

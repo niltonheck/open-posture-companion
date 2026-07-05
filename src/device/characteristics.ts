@@ -58,6 +58,31 @@ export const Characteristic = {
    */
   posture: fullUUID('aaca'),
   /**
+   * Notify/Read: per-minute telemetry summary byte (decoded 2026-07-03,
+   * TODO 5.8): notifies every ~60 s, re-emitting even when unchanged.
+   * bit 7 = currently slouched, bit 6 = pause/Tracking mode, low bits =
+   * slouch-excursion count in the preceding interval. Corrected on
+   * hardware 2026-07-04: the excursion counter does NOT increment while
+   * Tracking mode is active (bit 7 appears to keep working) — slouch
+   * counts are Training-mode-only. A read returns the rolling last-minute
+   * value — do NOT prime it like the vitals reads, that would
+   * double-count a tick.
+   */
+  telemetry: fullUUID('aac9'),
+  /**
+   * Read: uint32 LE uptime since power-on in deciseconds (~10 Hz).
+   * PROBABLE — single-session decode (2026-07-04 probe, TODO 5.9); confirm
+   * on hardware before presenting derived numbers as fact.
+   */
+  uptime: fullUUID('aac5'),
+  /**
+   * Read: two uint16 LE counters — [connection/session count][lifetime
+   * minutes]. PROBABLE — single-session decode (2026-07-04 probe): first
+   * +1 across one disconnect/reconnect cycle, second +10 over ~10 minutes
+   * and persists across the aac5 epoch. Confirm before shipping numbers.
+   */
+  odometer: fullUUID('aae1'),
+  /**
    * Notify/Read: battery voltage, uint16 LE millivolts (~60 s cadence;
    * jumps upward when the charger connects). GAP-06 resolved 2026-07-03.
    */
@@ -98,6 +123,9 @@ export const SERVICE_BY_CHARACTERISTIC: Readonly<Record<string, string>> = {
   [Characteristic.button]: Service.aac0,
   [Characteristic.pauseMode]: Service.aac0,
   [Characteristic.posture]: Service.aac0,
+  [Characteristic.telemetry]: Service.aac0,
+  [Characteristic.uptime]: Service.aac0,
+  [Characteristic.odometer]: Service.aae0,
   [Characteristic.batteryVoltage]: Service.aad0,
   [Characteristic.vibration]: Service.aad0,
   [Characteristic.ledRed]: Service.aad0,
@@ -117,5 +145,12 @@ export const Command = {
 export const CalibrationState = {
   none: 0x00,
   calibrated: 0x02,
+} as const;
+
+/** aac9 telemetry byte layout (decoded 2026-07-03, TODO 5.8). */
+export const Telemetry = {
+  slouchedBit: 0x80,
+  pausedBit: 0x40,
+  excursionMask: 0x3f,
 } as const;
 

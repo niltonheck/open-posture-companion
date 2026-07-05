@@ -686,47 +686,21 @@ function minuteOfDayNow(): number {
 }
 
 /**
- * One hour of the timeline: 60 minute slots over an hour label. Memoized
- * on its flags substring so past hours skip re-rendering on every tick —
- * only the current hour's block changes.
+ * Minutes shown either side of "now" — a one-hour window total. Slots
+ * stretch to the card width, so widening the span only makes them thinner.
  */
-const TimelineHour = React.memo(function TimelineHour({
-  flags,
-  label,
-}: {
-  flags: string;
-  label: string;
-}) {
-  return (
-    <View style={styles.timelineHour}>
-      <View style={styles.timelineRow}>
-        {Array.from(flags, (flag, index) => (
-          <View
-            key={index}
-            style={[
-              styles.timelineSlot,
-              flag === 'u' && styles.timelineUpright,
-              flag === 's' && styles.timelineSlouched,
-            ]}
-          />
-        ))}
-      </View>
-      <Text style={Type.caption}>{label}</Text>
-    </View>
-  );
-});
+const TIMELINE_HALF_SPAN_MINUTES = 30;
 
 /**
- * Full-day posture strip, horizontally scrollable by hour: one slot per
- * minute, upright = short green, slouched = tall red, no data (off,
- * unworn, gap) = faint dot. Height differences carry the meaning
- * alongside color (never color alone — docs/product.html); the legend
- * names them and the whole element reads as one day summary to screen
- * readers. History-only by design (the live "Posture:" line above is the
- * real-time cue); the provider backfills tick-cadence gaps. Starts at the
- * first recorded hour (earlier minutes are dots by physics — the device
- * keeps no history to backfill from) and follows "now" unless the user
- * has scrolled back.
+ * Posture strip: a fixed now-centered window that always fills the card
+ * width — the current minute sits under the center marker, the last half
+ * hour to its left, the (empty) next half hour to its right; the strip
+ * slides as time advances. One slot per minute, upright = short green,
+ * slouched = tall red, no data (off, unworn, gap, future) = faint dot.
+ * Height differences carry the meaning alongside color (never color alone
+ * — docs/product.html); the whole element reads as one day summary to
+ * screen readers. History-only by design (the live "Posture:" line above
+ * is the real-time cue); the provider backfills tick-cadence gaps.
  */
 function PostureTimeline({ visible }: { visible: boolean }) {
   const stats = useSessionStats();
@@ -737,47 +711,38 @@ function PostureTimeline({ visible }: { visible: boolean }) {
     const interval = setInterval(() => setNowMinute(minuteOfDayNow()), 10_000);
     return () => clearInterval(interval);
   }, []);
-  const scrollRef = useRef<ScrollView>(null);
-  // Follow the growing edge only while the user is already there —
-  // yanking them mid-scrollback once a minute would be hostile.
-  const atEndRef = useRef(true);
 
   const flags = stats.minuteFlags;
-  let firstRecorded = -1;
+  let hasRecorded = false;
   let uprightCount = 0;
   let slouchedCount = 0;
   for (let minute = 0; minute < flags.length; minute += 1) {
-    if (flags[minute] === 'u' || flags[minute] === 's') {
-      if (firstRecorded === -1) {
-        firstRecorded = minute;
-      }
-      if (flags[minute] === 'u') {
-        uprightCount += 1;
-      } else {
-        slouchedCount += 1;
-      }
+    if (flags[minute] === 'u') {
+      hasRecorded = true;
+      uprightCount += 1;
+    } else if (flags[minute] === 's') {
+      hasRecorded = true;
+      slouchedCount += 1;
     }
   }
-  if (!visible || firstRecorded === -1) {
+  if (!visible || !hasRecorded) {
     return null;
   }
 
-  const endMinute = Math.max(nowMinute, flags.length - 1);
-  const hours: { label: string; flags: string }[] = [];
+  // Minutes outside today (window crossing midnight) render as dots, same
+  // as unrecorded ones — flags[m] is undefined there.
+  const slots: string[] = [];
   for (
-    let hour = Math.floor(firstRecorded / 60);
-    hour <= Math.floor(endMinute / 60);
-    hour += 1
+    let minute = nowMinute - TIMELINE_HALF_SPAN_MINUTES;
+    minute <= nowMinute + TIMELINE_HALF_SPAN_MINUTES;
+    minute += 1
   ) {
-    const hourStart = hour * 60;
-    const hourEnd = Math.min(hourStart + 59, endMinute);
-    let hourFlags = '';
-    for (let minute = hourStart; minute <= hourEnd; minute += 1) {
-      const flag = flags[minute];
-      hourFlags += flag === 'u' || flag === 's' ? flag : '.';
-    }
-    hours.push({ label: `${String(hour).padStart(2, '0')}:00`, flags: hourFlags });
+    const flag = minute >= 0 ? flags[minute] : undefined;
+    slots.push(flag === 'u' || flag === 's' ? flag : '.');
   }
+  const nowLabel = `${String(Math.floor(nowMinute / 60)).padStart(2, '0')}:${String(
+    nowMinute % 60,
+  ).padStart(2, '0')}`;
 
   return (
     <View
@@ -789,36 +754,28 @@ function PostureTimeline({ visible }: { visible: boolean }) {
       } slouching`}
       style={styles.timeline}
     >
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        scrollEventThrottle={100}
-        onScroll={(event) => {
-          const { contentOffset, layoutMeasurement, contentSize } =
-            event.nativeEvent;
-          atEndRef.current =
-            contentOffset.x + layoutMeasurement.width >=
-            contentSize.width - 24;
-        }}
-        onContentSizeChange={() => {
-          if (atEndRef.current) {
-            scrollRef.current?.scrollToEnd({ animated: false });
-          }
-        }}
-      >
-        <View style={styles.timelineHours}>
-          {hours.map((hourBlock) => (
-            <TimelineHour
-              key={hourBlock.label}
-              flags={hourBlock.flags}
-              label={hourBlock.label}
-            />
-          ))}
-        </View>
-      </ScrollView>
+      <View style={styles.timelineRow}>
+        {/* Minutes without data — past gaps and the future half alike —
+            render as grey baseline dashes in the same per-minute rhythm
+            as the bars, so the strip reads as one continuous track. */}
+        {slots.map((flag, index) => (
+          <View
+            key={index}
+            style={[
+              styles.timelineSlot,
+              flag === 'u'
+                ? styles.timelineUpright
+                : flag === 's'
+                  ? styles.timelineSlouched
+                  : styles.timelineEmpty,
+            ]}
+          />
+        ))}
+        <View style={styles.timelineNowMarker} pointerEvents="none" />
+      </View>
+      <Text style={[Type.caption, styles.timelineNowLabel]}>{nowLabel}</Text>
       <Text style={Type.caption}>
-        Today · green low: upright · red tall: slouching
+        Green low: upright · red tall: slouching
       </Text>
     </View>
   );
@@ -987,14 +944,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     gap: 4,
   },
-  timelineHours: {
-    flexDirection: 'row',
-    // Matches the intra-hour slot gap so hour boundaries are seamless.
-    gap: 1,
-  },
-  timelineHour: {
-    gap: 2,
-  },
   timelineRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -1002,10 +951,29 @@ const styles = StyleSheet.create({
     height: 16,
   },
   timelineSlot: {
-    width: 3,
+    // Equal shares of the card width — the strip always fills it exactly.
+    flex: 1,
     height: 3,
     borderRadius: 1,
-    backgroundColor: Palette.borderDivider,
+  },
+  timelineEmpty: {
+    // borderDivider is imperceptible at 3px on the cream card; slate at
+    // low opacity keeps the empty dashes recessive but clearly there.
+    backgroundColor: Palette.secondarySlate,
+    opacity: 0.35,
+  },
+  timelineNowMarker: {
+    position: 'absolute',
+    left: '50%',
+    marginLeft: -1,
+    top: 0,
+    bottom: 0,
+    width: 2,
+    borderRadius: 1,
+    backgroundColor: Palette.primaryCharcoal,
+  },
+  timelineNowLabel: {
+    alignSelf: 'center',
   },
   timelineUpright: {
     height: 8,

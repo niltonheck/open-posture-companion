@@ -49,8 +49,10 @@ type PendingAction = 'vibration' | 'pause' | 'disconnect' | 'forget' | null;
 
 /**
  * Compact battery state beside the "Connected" label: glyph picked from the
- * 0–6 bar Material set (or the charging bolt), colored by charge level.
- * Color never carries the meaning alone — the percent text is right there.
+ * 0–6 bar Material set (or the charging bolt); green while charging,
+ * otherwise charcoal above 20%, amber at 20% and below, red below 10%
+ * (product owner's spec). Color never carries the meaning alone — the
+ * percent text is right there.
  */
 function BatteryIndicator({
   percent,
@@ -69,12 +71,13 @@ function BatteryIndicator({
         ? 'battery-full'
         : `battery-${Math.min(6, Math.max(0, Math.round((percent / 100) * 6)))}-bar`
   ) as keyof typeof MaterialIcons.glyphMap;
-  const color =
-    percent <= 10
+  const color = charging
+    ? Palette.successGreen
+    : percent < 10
       ? Palette.errorRed
-      : percent <= 25
-        ? Palette.warningOrange
-        : Palette.successGreen;
+      : percent <= 20
+        ? Palette.accentAmber
+        : Palette.primaryCharcoal;
   return (
     <View
       style={styles.batteryChip}

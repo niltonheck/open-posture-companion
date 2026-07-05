@@ -63,8 +63,9 @@ export const Characteristic = {
    * bit 7 = currently slouched, bit 6 = pause/Tracking mode, low bits =
    * slouch-excursion count in the preceding interval. Corrected on
    * hardware 2026-07-04: the excursion counter does NOT increment while
-   * Tracking mode is active (bit 7 appears to keep working) — slouch
-   * counts are Training-mode-only. A read returns the rolling last-minute
+   * Tracking mode is active, but bit 7 stays live there (0xc0 confirmed
+   * with a held slouch) — slouch counts are Training-mode-only, the
+   * slouched flag is not. A read returns the rolling last-minute
    * value — do NOT prime it like the vitals reads, that would
    * double-count a tick.
    */

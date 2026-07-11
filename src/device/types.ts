@@ -67,6 +67,17 @@ export interface DiscoveredDevice {
 }
 
 /**
+ * Short display form of a device id ("4F2A") — the human-readable tail of
+ * the iOS CoreBluetooth UUID / Android MAC. Every unit advertises the same
+ * name, so this suffix is what tells two of them apart in the UI; shown on
+ * scan rows and the connected screen so users can correlate the code with
+ * the physical unit.
+ */
+export function deviceIdSuffix(id: string): string {
+  return id.replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase();
+}
+
+/**
  * Live device health/state, decoded from the aaa2/aac3/aac7/aad2 notify
  * characteristics (docs/protocol.html, 2026-07-03). Fields are null until
  * the first reading arrives and while disconnected.

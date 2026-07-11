@@ -17,7 +17,10 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import { ActionButton } from '@/components/action-button';
 import { BluetoothPulse } from '@/components/bluetooth-pulse';
@@ -26,7 +29,12 @@ import { Disclaimer } from '@/components/disclaimer';
 import { Layout, Palette } from '@/constants/palette';
 import { Type } from '@/constants/typography';
 import { DEVICE_NAME } from '@/device/characteristics';
-import type { DiscoveredDevice, SignalStrength } from '@/device/types';
+import { DEMO_DEVICE_ID } from '@/device/demoTransport';
+import {
+  deviceIdSuffix,
+  type DiscoveredDevice,
+  type SignalStrength,
+} from '@/device/types';
 import { useDevice } from '@/hooks/useDevice';
 
 const SIGNAL_LABEL: Record<SignalStrength, string> = {
@@ -43,21 +51,30 @@ const SIGNAL_COLOR: Record<SignalStrength, string> = {
 };
 
 /**
- * One discovered device. While this row is connecting, its content dims in
- * place (still occupying layout, so the card never resizes) and a centered
- * "Connecting…" overlay crossfades in — the button label itself never
- * changes, which is what kept jolting the row width.
+ * One discovered device — the whole row is the tap target (2026-07-11
+ * review, same rule as the stats history rows; the chevron marks it
+ * tappable). While this row is connecting, its content dims in place
+ * (still occupying layout, so the card never resizes) and a centered
+ * "Connecting…" overlay crossfades in.
  */
 function DeviceRow({
   item,
   connecting,
   disabled,
+  lastUsed,
   onConnect,
 }: {
   item: DiscoveredDevice;
   connecting: boolean;
   /** Some connection attempt is in flight (this row's or another's). */
   disabled: boolean;
+  /**
+   * This is the remembered device (last successful connect). The pill
+   * disambiguates identical "UprightGO" rows — two real units, or the
+   * demo device in dev builds, where it shares the plain hardware name
+   * and is never remembered.
+   */
+  lastUsed: boolean;
   onConnect: () => void;
 }) {
   const dim = useSharedValue(connecting ? 1 : 0);
@@ -68,78 +85,104 @@ function DeviceRow({
     opacity: 1 - dim.value * 0.85,
   }));
 
+  const suffix = deviceIdSuffix(item.id);
   return (
-    <Card>
-      <Animated.View
-        style={[styles.deviceRowContent, contentStyle]}
-        accessibilityElementsHidden={connecting}
-        importantForAccessibility={
-          connecting ? 'no-hide-descendants' : 'auto'
-        }
-      >
-        <View
-          style={styles.deviceTile}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-        >
-          {item.name === DEVICE_NAME ? (
-            // Original silhouette illustration, not an UPRIGHT asset —
-            // see the header comment in device-upright-go.svg.
-            <Image
-              source={require('../../assets/images/device-upright-go.png')}
-              style={styles.deviceTileLogo}
-            />
-          ) : (
-            <MaterialIcons
-              name="bluetooth"
-              size={34}
-              color={Palette.primaryCharcoal}
-            />
-          )}
-        </View>
-        {/* One grouped element: "UprightGO, Signal: Strong" per swipe. */}
-        <View style={styles.deviceInfo} accessible>
-          <Text style={Type.title}>{item.name}</Text>
-          <Text style={Type.body}>
-            Signal:{' '}
-            <Text style={{ color: SIGNAL_COLOR[item.signal] }}>
-              {SIGNAL_LABEL[item.signal]}
-            </Text>
-          </Text>
-        </View>
-        <ActionButton
-          label="Connect"
-          accessibilityLabel={`Connect to ${item.name}`}
-          variant="outline"
-          compact
-          disabled={disabled}
-          onPress={onConnect}
-        />
-      </Animated.View>
-      {connecting && (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Connect to ${item.name} ${suffix}${
+        lastUsed ? ', last used' : ''
+      }, signal ${SIGNAL_LABEL[item.signal].toLowerCase()}`}
+      accessibilityState={{ disabled, busy: connecting }}
+      disabled={disabled}
+      onPress={onConnect}
+      style={({ pressed }) => pressed && { opacity: Layout.pressedOpacity }}
+    >
+      <Card>
         <Animated.View
-          entering={FadeIn.duration(200)}
-          exiting={FadeOut.duration(150)}
-          style={styles.connectingOverlay}
-          pointerEvents="none"
-          accessibilityLiveRegion="polite"
+          style={[styles.deviceRowContent, contentStyle]}
+          accessibilityElementsHidden={connecting}
+          importantForAccessibility={
+            connecting ? 'no-hide-descendants' : 'auto'
+          }
         >
-          <BluetoothPulse size={20} color={Palette.primaryCharcoal} />
-          <Text style={[Type.body, styles.connectingText]}>Connecting…</Text>
+          <View
+            style={styles.deviceTile}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          >
+            {/* Prefix match: the demo device is named "UprightGO (Demo)" in
+                production builds and deserves the same silhouette. */}
+            {item.name.startsWith(DEVICE_NAME) ? (
+              // Original silhouette illustration, not an UPRIGHT asset —
+              // see the header comment in device-upright-go.svg.
+              <Image
+                source={require('../../assets/images/device-upright-go.png')}
+                style={styles.deviceTileLogo}
+              />
+            ) : (
+              <MaterialIcons
+                name="bluetooth"
+                size={34}
+                color={Palette.primaryCharcoal}
+              />
+            )}
+          </View>
+          {/* The row Pressable carries the composed a11y label; every unit
+              advertises the same name, so the id suffix is the only thing
+              that tells two of them apart. The pill's meaning rides on its
+              text, never color alone. */}
+          <View style={styles.deviceInfo}>
+            <View style={styles.deviceNameRow}>
+              <Text style={Type.title}>{item.name}</Text>
+              <Text style={Type.caption}>· {suffix}</Text>
+              {lastUsed && (
+                <View style={styles.lastUsedPill}>
+                  <Text style={[Type.caption, styles.lastUsedText]}>
+                    Last used
+                  </Text>
+                </View>
+              )}
+            </View>
+            <Text style={Type.body}>
+              Signal:{' '}
+              <Text style={{ color: SIGNAL_COLOR[item.signal] }}>
+                {SIGNAL_LABEL[item.signal]}
+              </Text>
+            </Text>
+          </View>
+          <MaterialIcons
+            name="chevron-right"
+            size={20}
+            color={Palette.secondarySlate}
+          />
         </Animated.View>
-      )}
-    </Card>
+        {connecting && (
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            exiting={FadeOut.duration(150)}
+            style={styles.connectingOverlay}
+            pointerEvents="none"
+            accessibilityLiveRegion="polite"
+          >
+            <BluetoothPulse size={20} color={Palette.primaryCharcoal} />
+            <Text style={[Type.body, styles.connectingText]}>Connecting…</Text>
+          </Animated.View>
+        )}
+      </Card>
+    </Pressable>
   );
 }
 
 export default function SelectDeviceScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const {
     connectionState,
     scanStatus,
     devices,
     device,
     bluetoothOff,
+    rememberedDevice,
     startScan,
     stopScan,
     connect,
@@ -176,7 +219,17 @@ export default function SelectDeviceScreen() {
     setConnectError(false);
     setPendingId(target.id);
     try {
-      await connect(target);
+      const instance = await connect(target);
+      if (!focusedRef.current) {
+        void disconnect();
+        return;
+      }
+      // Onboarding gate (specs/design_decisions.md): a real device that
+      // connects uncalibrated (aab2 resets on power cycle) goes straight
+      // into the calibrate step. The demo device bypasses it — reviewer
+      // sessions must land on the marquee screen with no detour.
+      const needsCalibration =
+        target.id !== DEMO_DEVICE_ID && !(await instance.isCalibrated());
       if (!focusedRef.current) {
         void disconnect();
         return;
@@ -185,6 +238,11 @@ export default function SelectDeviceScreen() {
       // Replace so the back gesture from the connected screen returns home,
       // not to a consumed scan list.
       router.replace('/connected');
+      if (needsCalibration) {
+        // Pushed over /connected, so back/swipe and "Skip for now" both
+        // land there naturally — no gesture blocking needed.
+        router.push({ pathname: '/calibrate', params: { onboarding: '1' } });
+      }
     } catch {
       if (focusedRef.current) {
         setConnectError(true);
@@ -205,8 +263,13 @@ export default function SelectDeviceScreen() {
   // finished ("Scan again").
   const scanning = scanStatus === 'scanning';
   // With permission missing or the radio off, entries can't be reached —
-  // don't leave them rendered and tappable.
-  const listDevices = permissionNeeded || bluetoothOff ? [] : devices;
+  // don't leave them rendered and tappable. The demo device is the
+  // exception: connecting to it never touches the radio, and it must stay
+  // reachable in a reviewer environment we don't control (BT off, denied).
+  const listDevices =
+    permissionNeeded || bluetoothOff
+      ? devices.filter((item) => item.id === DEMO_DEVICE_ID)
+      : devices;
 
   const renderEmptyState = () => {
     if (permissionNeeded) {
@@ -261,7 +324,9 @@ export default function SelectDeviceScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    // Bottom edge released so the list scrolls under the home indicator;
+    // the inset moves into the list's bottom padding (see connected.tsx).
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* Native header is hidden for this screen (_layout.tsx); the iOS
           swipe-back gesture still works, this arrow is the visible way out. */}
       <Pressable
@@ -280,7 +345,10 @@ export default function SelectDeviceScreen() {
       <FlatList
         data={listDevices}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[
+          styles.list,
+          { paddingBottom: Layout.pagePadding + insets.bottom },
+        ]}
         ListHeaderComponent={
           <View style={styles.pageHeader}>
             <Text style={Type.display}>Select device</Text>
@@ -296,6 +364,7 @@ export default function SelectDeviceScreen() {
             item={item}
             connecting={connectingId === item.id}
             disabled={connectingId !== null}
+            lastUsed={item.id === rememberedDevice?.id}
             onConnect={() => void handleConnect(item)}
           />
         )}
@@ -392,6 +461,21 @@ const styles = StyleSheet.create({
   deviceInfo: {
     flex: 1,
     gap: 2,
+  },
+  deviceNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  lastUsedPill: {
+    backgroundColor: Palette.softGreen,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+  },
+  lastUsedText: {
+    color: Palette.primaryCharcoal,
   },
   connectError: {
     color: Palette.errorRed,

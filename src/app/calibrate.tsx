@@ -1,9 +1,19 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import { ActionButton } from '@/components/action-button';
 import { Card } from '@/components/card';
@@ -54,6 +64,12 @@ function ChecklistRow({
 
 export default function CalibrateScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  // Onboarding: pushed over /connected right after connecting a device
+  // that reports uncalibrated (aab2 = 0x00 — every power cycle). Back,
+  // swipe-back, and "Skip for now" all pop to the connected screen.
+  const { onboarding } = useLocalSearchParams<{ onboarding?: string }>();
+  const isOnboarding = onboarding === '1';
   const { device, connectionState, bluetoothOff } = useDevice();
   const [flow, setFlow] = useState<FlowResult>('ready');
 
@@ -85,10 +101,24 @@ export default function CalibrateScreen() {
     : BUTTON_TEXT[flow];
 
   return (
-    <SafeAreaView style={styles.container}>
+    // Bottom edge released so the scroll flows under the home indicator;
+    // the inset moves into the content's bottom padding (see connected.tsx).
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* Native header is hidden (_layout.tsx). */}
       <PageHeader title="Calibrate posture" />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: Layout.pagePadding + insets.bottom },
+        ]}
+      >
+        {isOnboarding && flow !== 'done' && (
+          <Text style={Type.body}>
+            Your device is connected but not calibrated yet — this happens
+            after every power-off. Calibrating enables the live posture
+            status and slouch vibrations.
+          </Text>
+        )}
         {flow === 'done' ? (
           <Card>
             <Text style={[Type.display, styles.doneTitle]}>
@@ -164,6 +194,23 @@ export default function CalibrateScreen() {
               />
             </Card>
 
+            {isOnboarding && (
+              // Quiet caption action (forget-link pattern): skipping is
+              // legitimate — the connected screen's posture line and the
+              // Calibrate button carry the uncalibrated state from there.
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Skip calibration for now"
+                onPress={() => router.back()}
+                hitSlop={8}
+                style={({ pressed }) => [
+                  styles.skipLink,
+                  pressed && styles.skipLinkDim,
+                ]}
+              >
+                <Text style={Type.caption}>Skip for now</Text>
+              </Pressable>
+            )}
             {flow === 'error' && (
               <Text style={[Type.body, styles.errorText]}>
                 Calibration didn’t complete. Make sure the device is connected
@@ -268,6 +315,14 @@ const styles = StyleSheet.create({
   errorText: {
     color: Palette.errorRed,
     textAlign: 'center',
+  },
+  skipLink: {
+    alignSelf: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  skipLinkDim: {
+    opacity: Layout.pressedOpacity,
   },
   footer: {
     marginTop: Layout.sectionGap - Layout.componentGap,

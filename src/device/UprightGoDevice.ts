@@ -515,6 +515,24 @@ export class UprightGoDevice {
     }
   }
 
+  /**
+   * Whether the device is currently calibrated and armed (aab2 = 0x02;
+   * resets on power cycle — docs/protocol.html). Drives the post-connect
+   * onboarding gate: an uncalibrated device routes into the calibrate
+   * step. Fails open (calibrated) so a flaky read never forces a redundant
+   * onboarding calibration — the same tolerance adoptDeviceCalibration
+   * applies on the adoption side.
+   */
+  async isCalibrated(): Promise<boolean> {
+    try {
+      const state = await this.read(Characteristic.calibrationState);
+      return state[0] === CalibrationState.calibrated;
+    } catch (error) {
+      console.log(`${TAG} calibration-state read failed (assuming calibrated):`, error);
+      return true;
+    }
+  }
+
   async setVibration(on: boolean): Promise<void> {
     await this.write(Characteristic.vibration, on ? Command.on : Command.off);
     this.motorOn = on;

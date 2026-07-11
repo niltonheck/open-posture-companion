@@ -21,6 +21,11 @@ import React, {
 import { AppState } from 'react-native';
 
 import {
+  createDemoTransport,
+  DEMO_DEVICE_ID,
+  DEMO_DISCOVERED_DEVICE,
+} from '@/device/demoTransport';
+import {
   destroyBleManager,
   getBleManager,
   onAdapterStateChange,
@@ -36,6 +41,7 @@ import type {
   Unsubscribe,
 } from '@/device/types';
 import { UprightGoDevice } from '@/device/UprightGoDevice';
+import { isDemoMode } from '@/storage/demoMode';
 import {
   forgetRememberedDevice,
   getRememberedDevice,
@@ -79,8 +85,15 @@ export interface DeviceContextValue {
   rememberedDevice: RememberedDevice | null;
   startScan: () => void;
   stopScan: () => void;
-  /** Only id/name matter for connecting; scan metadata is display-only. */
-  connect: (target: Pick<DiscoveredDevice, 'id' | 'name'>) => Promise<void>;
+  /**
+   * Only id/name matter for connecting; scan metadata is display-only.
+   * Resolves with the connected instance so the caller can make immediate
+   * post-connect decisions (onboarding gate) without racing the context's
+   * next render.
+   */
+  connect: (
+    target: Pick<DiscoveredDevice, 'id' | 'name'>,
+  ) => Promise<UprightGoDevice>;
   disconnect: () => Promise<void>;
   /**
    * Direct connect to the remembered device, skipping the scan flow.
@@ -196,6 +209,13 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     // rendered (and tappable) while the permission request below is
     // pending; a stale entry may no longer be reachable.
     setDevices([]);
+    // Demo mode (App Store review / screenshots): surface the simulated
+    // device alongside any real results. Injected before the permission
+    // request on purpose — connecting to it never touches the radio, so it
+    // must stay reachable when permission is denied or the scan errors.
+    if (isDemoMode()) {
+      setDevices([DEMO_DISCOVERED_DEVICE]);
+    }
     // 'scanning' from the moment of the user action: the permission-prompt
     // window is part of the scan from the UI's point of view, and screens
     // must never present an in-progress scan as finished ("Scan again").
@@ -242,7 +262,13 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // Release the previous device first — a connected Upright GO stops
         // advertising, so a leaked link could never be found by a rescan.
         await deviceRef.current?.disconnect();
-        instance = new UprightGoDevice(getBleManager(), target.id, target.name);
+        // The demo device runs the same UprightGoDevice pipeline over a
+        // fake transport (ADR-002 seam) — no radio involved.
+        instance = new UprightGoDevice(
+          target.id === DEMO_DEVICE_ID ? createDemoTransport() : getBleManager(),
+          target.id,
+          target.name,
+        );
         // Stamp the tier before any link work: the AppState effect below
         // only runs after React commits this render, and a connect that
         // starts while backgrounded (state-restoration relaunch, launch
@@ -261,13 +287,20 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setDevices([]);
       // Remember for the next launch's direct reconnect (Phase 9.1) —
       // skipped when unchanged (every launch reconnect comes through here).
+      // The demo device is never remembered: it must not clobber a real
+      // user's remembered device, and the launch reconnect path stays free
+      // of demo branches (a reviewer just re-scans after a relaunch).
       const previous = rememberedRef.current;
-      if (previous?.id !== target.id || previous.name !== target.name) {
+      if (
+        target.id !== DEMO_DEVICE_ID &&
+        (previous?.id !== target.id || previous.name !== target.name)
+      ) {
         const entry = { id: target.id, name: target.name };
         rememberDevice(entry);
         rememberedRef.current = entry;
         setRemembered(entry);
       }
+      return instance;
     },
     [stopScan],
   );

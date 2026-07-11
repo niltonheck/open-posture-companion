@@ -13,6 +13,8 @@ import React, {
   useState,
 } from 'react';
 
+import { DEMO_DEVICE_ID } from '@/device/demoTransport';
+import { buildDemoDayStats } from '@/storage/demoDayStats';
 import {
   loadDayStats,
   localDateKey,
@@ -35,15 +37,25 @@ const SLOUCHED_MINUTE_MIN_SECONDS = 5;
 interface DayRecord {
   key: string;
   stats: DayStats;
+  /** In-memory demo-session day (fixture-seeded, never persisted). */
+  demo: boolean;
 }
 
-/** Today's record — re-loads from storage when the calendar day moves. */
-function currentDay(previous?: DayRecord): DayRecord {
+/**
+ * Today's record — re-loads from storage when the calendar day moves. A
+ * demo session (simulated device, App Store review) runs on a generated
+ * in-memory fixture instead: entering demo swaps to the fixture, leaving
+ * it reloads the untouched real day from storage.
+ */
+function currentDay(previous: DayRecord | undefined, demo: boolean): DayRecord {
   const key = localDateKey();
-  if (previous && previous.key === key) {
+  if (previous && previous.key === key && previous.demo === demo) {
     return previous;
   }
-  return { key, stats: loadDayStats(key) };
+  if (demo) {
+    return { key, stats: buildDemoDayStats(), demo: true };
+  }
+  return { key, stats: loadDayStats(key), demo: false };
 }
 
 const SessionStatsContext = createContext<DayStats | null>(null);
@@ -54,17 +66,28 @@ export function SessionStatsProvider({
   children: React.ReactNode;
 }) {
   const { device } = useDevice();
+  // Known benign staleness: after disconnecting from the demo device the
+  // context keeps serving demo stats until a real device connects or the
+  // app relaunches — nothing outside /connected reads these today.
+  const demoActive = device?.id === DEMO_DEVICE_ID;
   // Continues today's tally across app restarts (one sync kv-store read).
-  const [day, setDay] = useState<DayRecord>(() => currentDay());
+  const [day, setDay] = useState<DayRecord>(() => currentDay(undefined, false));
   // Slouched seconds credited since the last tick — read and reset
   // outside the setDay updater (updaters must stay pure) to classify the
   // tick's minute for the timeline.
   const intervalSlouchSecondsRef = useRef(0);
 
+  // Entering/leaving a demo session swaps the whole day record (see
+  // currentDay); the real day's persisted record is never touched by it.
+  useEffect(() => {
+    setDay((previous) => currentDay(previous, demoActive));
+  }, [demoActive]);
+
   useEffect(() => {
     if (!device) {
       return;
     }
+    const demo = device.id === DEMO_DEVICE_ID;
     // Worn gates what counts: a dangling device streams tilt that is not
     // the wearer's posture. The tick carries worn (stamped by the device
     // layer); null fails open — same policy as the connected screen — so
@@ -87,7 +110,7 @@ export function SessionStatsProvider({
       // a day change (midnight, timezone travel) never clobbers a day
       // that already has persisted ticks.
       setDay((previous) => {
-        const base = currentDay(previous);
+        const base = currentDay(previous, demo);
         let minuteFlags = setMinuteFlag(
           base.stats.minuteFlags,
           minuteOfDay,
@@ -110,7 +133,7 @@ export function SessionStatsProvider({
           minuteFlags = setMinuteFlag(minuteFlags, previousMinute, flag);
         }
         return {
-          key: base.key,
+          ...base,
           stats: {
             ...base.stats,
             connectedTicks: base.stats.connectedTicks + 1,
@@ -128,9 +151,9 @@ export function SessionStatsProvider({
     // both modes. Worn- and dwell-gating live in the device layer.
     const unsubscribeSlouches = device.onSlouchEvent(() => {
       setDay((previous) => {
-        const base = currentDay(previous);
+        const base = currentDay(previous, demo);
         return {
-          key: base.key,
+          ...base,
           stats: {
             ...base.stats,
             slouchCount: base.stats.slouchCount + 1,
@@ -149,9 +172,9 @@ export function SessionStatsProvider({
       }
       intervalSlouchSecondsRef.current += seconds;
       setDay((previous) => {
-        const base = currentDay(previous);
+        const base = currentDay(previous, demo);
         return {
-          key: base.key,
+          ...base,
           stats: {
             ...base.stats,
             slouchedSeconds: base.stats.slouchedSeconds + seconds,
@@ -167,9 +190,13 @@ export function SessionStatsProvider({
   }, [device]);
 
   // Persist outside the updater (updaters must stay side-effect free); the
-  // write is idempotent, so a double-invoked effect costs nothing.
+  // write is idempotent, so a double-invoked effect costs nothing. A demo
+  // day stays in memory only — simulated data must never reach the real
+  // session-stats keys.
   useEffect(() => {
-    saveDayStats(day.key, day.stats);
+    if (!day.demo) {
+      saveDayStats(day.key, day.stats);
+    }
   }, [day]);
 
   // Without ticks nothing re-renders past midnight, and yesterday's totals
@@ -185,11 +212,11 @@ export function SessionStatsProvider({
       now.getDate() + 1,
     );
     const timer = setTimeout(
-      () => setDay((previous) => currentDay(previous)),
+      () => setDay((previous) => currentDay(previous, demoActive)),
       nextMidnight.getTime() - now.getTime() + 1_000,
     );
     return () => clearTimeout(timer);
-  }, [day.key]);
+  }, [day.key, demoActive]);
 
   return (
     <SessionStatsContext.Provider value={day.stats}>

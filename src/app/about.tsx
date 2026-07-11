@@ -1,8 +1,10 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
+  Alert,
   Image,
   Pressable,
   ScrollView,
@@ -10,7 +12,10 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import { Card } from '@/components/card';
 import { Disclaimer } from '@/components/disclaimer';
@@ -18,6 +23,11 @@ import { PageHeader } from '@/components/page-header';
 import { Layout, Palette } from '@/constants/palette';
 import { APP_REPO_URL, PROTOCOL_RESEARCH_URL } from '@/constants/links';
 import { Type } from '@/constants/typography';
+import { isDemoMode, setDemoMode } from '@/storage/demoMode';
+
+/** Taps on the version line within DEMO_TAP_WINDOW_MS to toggle demo mode. */
+const DEMO_TAP_COUNT = 5;
+const DEMO_TAP_WINDOW_MS = 2_000;
 
 /** Badge + label row that opens an external link in the in-app browser. */
 function LinkRow({ label, url }: { label: string; url: string }) {
@@ -33,14 +43,14 @@ function LinkRow({ label, url }: { label: string; url: string }) {
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
       >
-        <MaterialIcons name="code" size={20} color={Palette.primaryCharcoal} />
+        <MaterialIcons name="code" size={22} color={Palette.primaryCharcoal} />
       </View>
       <Text style={[Type.body, styles.linkLabel]} numberOfLines={2}>
         {label}
       </Text>
       <MaterialIcons
         name="open-in-new"
-        size={18}
+        size={20}
         color={Palette.secondarySlate}
       />
     </Pressable>
@@ -48,13 +58,54 @@ function LinkRow({ label, url }: { label: string; url: string }) {
 }
 
 export default function AboutScreen() {
+  const insets = useSafeAreaInsets();
   const version = Constants.expoConfig?.version ?? '1.0.0';
+  const [demoMode, setDemoModeState] = useState(isDemoMode);
+  const demoTapCountRef = useRef(0);
+  const demoTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Hidden gesture for App Store review / screenshots: five quick taps on
+  // the version line toggle demo mode (a simulated device in scan results).
+  // Deliberately quiet — no accessibility role, no visual affordance; the
+  // App Review notes document the steps for the reviewer.
+  const handleVersionTap = () => {
+    if (demoTapTimerRef.current !== null) {
+      clearTimeout(demoTapTimerRef.current);
+    }
+    demoTapTimerRef.current = setTimeout(() => {
+      demoTapCountRef.current = 0;
+    }, DEMO_TAP_WINDOW_MS);
+    demoTapCountRef.current += 1;
+    if (demoTapCountRef.current < DEMO_TAP_COUNT) {
+      return;
+    }
+    demoTapCountRef.current = 0;
+    const next = !isDemoMode();
+    setDemoMode(next);
+    setDemoModeState(next);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert(
+      next ? 'Demo mode on' : 'Demo mode off',
+      next
+        ? 'A simulated posture device will appear when you scan. It behaves ' +
+            'like real hardware, but nothing is saved to your history. Tap ' +
+            'the version number five times again to turn demo mode off.'
+        : undefined,
+    );
+  };
 
   return (
-    <SafeAreaView style={styles.container}>
+    // Bottom edge released so the scroll flows under the home indicator;
+    // the inset moves into the content's bottom padding (see connected.tsx).
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* Native header is hidden (_layout.tsx). */}
       <PageHeader title="About" />
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: Layout.pagePadding + insets.bottom },
+        ]}
+      >
         <Card style={styles.identityCard}>
           <View
             style={styles.logoTile}
@@ -69,9 +120,13 @@ export default function AboutScreen() {
           <Text style={[Type.title, styles.centered]}>
             Open Posture Companion
           </Text>
-          <Text style={[Type.caption, styles.centered]}>
-            Version {version}
-          </Text>
+          <Pressable onPress={handleVersionTap}>
+            <Text style={[Type.caption, styles.centered]}>
+              {/* "· demo" keeps the hidden toggle's state always visible. */}
+              Version {version}
+              {demoMode ? ' · demo' : ''}
+            </Text>
+          </Pressable>
           <Text style={[Type.body, styles.centered]}>
             An independent, open-source companion app for selected Upright GO 1
             posture trainers, created after the official app was discontinued.

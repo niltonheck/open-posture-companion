@@ -3,6 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   BackHandler,
   Image,
   Pressable,
@@ -12,7 +13,10 @@ import {
   View,
 } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import { ActionButton } from '@/components/action-button';
 import { AppHeader } from '@/components/app-header';
@@ -28,7 +32,16 @@ import {
   dumpReadableCharacteristics,
   monitorAllNotifiables,
 } from '@/device/devHarness';
-import type { DeviceOdometer, PostureStatus } from '@/device/types';
+import {
+  DEMO_DEVICE_ID,
+  setDemoPostureOverride,
+  type DemoPostureOverride,
+} from '@/device/demoTransport';
+import {
+  deviceIdSuffix,
+  type DeviceOdometer,
+  type PostureStatus,
+} from '@/device/types';
 import type { UprightGoDevice } from '@/device/UprightGoDevice';
 import { useDevice } from '@/hooks/useDevice';
 import { usePosture } from '@/hooks/usePosture';
@@ -36,11 +49,15 @@ import { useSessionStats } from '@/hooks/useSessionStats';
 import { useTilt } from '@/hooks/useTilt';
 import { useVitals } from '@/hooks/useVitals';
 
+// 'unknown' = genuinely uncalibrated hardware (post power-cycle; the
+// onboarding flow catches new connects, so this shows only after a skip
+// or an auto-reconnect to a power-cycled device). Deliberately a quiet
+// line, not a callout — 2026-07-11 review demoted the amber card.
 const POSTURE_LINE: Record<PostureStatus, { label: string; color: string }> = {
   upright: { label: 'Upright', color: Palette.successGreen },
   slouching: { label: 'Slouching', color: Palette.warningOrange },
   unknown: {
-    label: 'Calibrate to see live status',
+    label: 'Calibrate to see live posture',
     color: Palette.secondarySlate,
   },
 };
@@ -92,6 +109,7 @@ function BatteryIndicator({
 
 export default function ConnectedScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { device, connectionState, bluetoothOff, disconnect, forgetDevice } =
     useDevice();
   const posture = usePosture();
@@ -103,14 +121,13 @@ export default function ConnectedScreen() {
     ok: boolean;
     text: string;
   }>({ ok: true, text: 'Connected' });
-  // Test vibration + Status live behind this disclosure. A failed action
-  // must never report into a collapsed section, so errors force it open.
-  const [toolsOpen, setToolsOpen] = useState(false);
-  useEffect(() => {
-    if (!lastAction.ok) {
-      setToolsOpen(true);
-    }
-  }, [lastAction]);
+  // "This device" details expansion (odometer lines + dev demo steering).
+  // Errors don't need to force anything open anymore — the status line
+  // under the actions card is always visible (Option 1 redesign).
+  const [infoOpen, setInfoOpen] = useState(false);
+  // Mirrors the transport's screenshot-steering override (write-only API);
+  // null = the 60 s auto cycle, matching a fresh demo connection.
+  const [demoOverride, setDemoOverride] = useState<DemoPostureOverride>(null);
 
   // Deliberate disconnect lands on 'idle', an exhausted reconnect schedule
   // on 'disconnected' — either way this screen's subject is gone, so
@@ -269,99 +286,108 @@ export default function ConnectedScreen() {
   // screen just reports it. Exhausted attempts land on 'disconnected' and
   // the watcher above takes the user home.
   const reconnecting = connectionState === 'reconnecting';
-  // 'unknown' now means genuinely uncalibrated hardware: the device layer
-  // reads the stored calibration on connect (aab2/aab3) and adopts its
-  // baseline, so an already-calibrated device gets a live status line with
-  // no callout. Training mode dies on power cycle (aab2 → 0x00), which is
-  // exactly when this callout should appear.
-  const needsCalibration = !reconnecting && posture === 'unknown';
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
+    // Bottom edge released on scrollable screens (2026-07-11): with it, the
+    // scroll surface clips ~34 pt above the screen bottom and the scroll
+    // feels walled-in. Content flows under the home indicator instead, and
+    // the inset moves into the content's bottom padding so the last element
+    // still clears the indicator at rest.
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: Layout.pagePadding + insets.bottom },
+        ]}
+      >
         <AppHeader style={styles.appHeader} />
+        {/* Live-only main card (Option 3, 2026-07-11 redesign): identity is
+            a compact caption row — the name is stable chrome, not the hero
+            — and the live posture takes the display slot. Today's numbers
+            and the timeline live in the Statistics card below. */}
         <Card>
-          <View style={styles.deviceRow}>
+          <View
+            style={styles.identityRow}
+            accessible
+            accessibilityLabel={`${device?.name ?? 'Posture device'}${
+              device ? ' ' + deviceIdSuffix(device.id) : ''
+            }, ${reconnecting ? 'connection lost' : 'connected'}`}
+          >
             <View
               style={[
-                styles.stateBadge,
+                styles.identityBadge,
                 reconnecting ? styles.stateBadgeWarn : styles.stateBadgeOk,
               ]}
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
             >
               {reconnecting ? (
-                <BluetoothPulse size={34} color={Palette.warningOrange} />
+                <BluetoothPulse size={20} color={Palette.warningOrange} />
               ) : (
                 <MaterialIcons
                   name="check-circle-outline"
-                  size={38}
+                  size={20}
                   color={Palette.successGreen}
                 />
               )}
             </View>
-            <View style={styles.deviceSummary}>
-              <View style={styles.stateLabelRow}>
-                <Text
-                  style={[
-                    Type.body,
-                    reconnecting
-                      ? styles.reconnectingLabel
-                      : styles.connectedLabel,
-                  ]}
-                >
-                  {reconnecting ? 'Connection lost' : 'Connected'}
-                </Text>
-                {/* Hidden while reconnecting — the reading would be stale. */}
-                {!reconnecting && (
-                  <BatteryIndicator
-                    percent={vitals.batteryPercent}
-                    charging={vitals.charging}
-                  />
-                )}
-              </View>
-              <Text style={Type.display}>
-                {device?.name ?? 'Posture device'}
-              </Text>
-              <Text style={Type.body}>Compatible device</Text>
-            </View>
-          </View>
-          {reconnecting ? (
-          <Text
-            style={[Type.body, styles.reconnectingHint]}
-            accessibilityLiveRegion="polite"
-          >
-            {bluetoothOff
-              ? 'Bluetooth is off. Turn it on to reconnect.'
-              : 'Trying to reconnect — keep the device nearby.'}
-          </Text>
-        ) : (
-          // One grouped element so screen readers get "Posture: Upright" in
-          // a single swipe; polite live region announces changes on Android.
-          <View
-            style={styles.postureRow}
-            accessible
-            accessibilityLiveRegion="polite"
-          >
-            <Text style={Type.body}>Posture: </Text>
-            {deviceOff ? (
-              // A dangling device still streams tilt; never present that
-              // as the wearer's posture.
-              <Text style={[Type.body, styles.postureValue]}>
-                Device not worn
-              </Text>
-            ) : (
-              <Text
-                style={[Type.body, styles.postureValue, { color: postureLine.color }]}
-              >
-                {postureLine.label}
-              </Text>
+            {/* Same id suffix as the scan rows — the only way to tell
+                identically-named units apart. */}
+            <Text style={[Type.body, styles.identityName]} numberOfLines={1}>
+              {device?.name ?? 'Posture device'}
+              {device ? ` · ${deviceIdSuffix(device.id)}` : ''}
+            </Text>
+            {/* Hidden while reconnecting — the reading would be stale. */}
+            {!reconnecting && (
+              <BatteryIndicator
+                percent={vitals.batteryPercent}
+                charging={vitals.charging}
+              />
             )}
           </View>
-        )}
+          {reconnecting ? (
+            <>
+              <Text style={[Type.title, styles.reconnectingLabel]}>
+                Connection lost
+              </Text>
+              <Text
+                style={[Type.body, styles.reconnectingHint]}
+                accessibilityLiveRegion="polite"
+              >
+                {bluetoothOff
+                  ? 'Bluetooth is off. Turn it on to reconnect.'
+                  : 'Trying to reconnect — keep the device nearby.'}
+              </Text>
+            </>
+          ) : (
+            // One grouped element so screen readers get "Posture: Upright"
+            // in a single swipe; polite live region announces changes on
+            // Android. The hero size is reserved for a live value — the
+            // not-worn and uncalibrated states render quiet instead.
+            <View
+              style={styles.heroBlock}
+              accessible
+              accessibilityLabel={`Posture: ${
+                deviceOff ? 'device not worn' : postureLine.label
+              }`}
+              accessibilityLiveRegion="polite"
+            >
+              {deviceOff ? (
+                // A dangling device still streams tilt; never present that
+                // as the wearer's posture.
+                <Text style={[Type.title, styles.heroQuiet]}>
+                  Device not worn
+                </Text>
+              ) : posture === 'unknown' ? (
+                <Text style={[Type.title, styles.heroQuiet]}>
+                  {postureLine.label}
+                </Text>
+              ) : (
+                <Text style={[styles.postureHero, { color: postureLine.color }]}>
+                  {postureLine.label}
+                </Text>
+              )}
+            </View>
+          )}
         <TiltCaption visible={!reconnecting && !deviceOff} />
-        <TodayStatsCaption visible={!reconnecting} />
-        <PostureTimeline visible={!reconnecting} />
         {/* Training = slouch vibration on; Tracking = senses only. The
             device's own taxonomy — never "paused/resumed" in UI copy. */}
         {!reconnecting && vitals.paused !== null && (
@@ -386,21 +412,54 @@ export default function ConnectedScreen() {
                 Senses posture — no slouch vibrations
               </Text>
             )}
+            {/* Training's promise only holds when armed — an uncalibrated
+                device (posture 'unknown') doesn't vibrate. */}
+            {!vitals.paused && posture !== 'unknown' && (
+              <Text style={Type.caption}>Vibrates when you slouch</Text>
+            )}
           </View>
         )}
       </Card>
 
-      {needsCalibration && (
-        <Card style={styles.calloutCard}>
-          <Text style={Type.title}>Calibration needed</Text>
-          <Text style={Type.body}>
-            Sit or stand upright, then calibrate. This sets the reference
-            for the live status and turns on Training mode (slouch
-            vibrations). If the device was calibrated before, this simply
-            resets it.
-          </Text>
+      {/* History lives on its own screen (specs/design_decisions.md →
+          "Statistics & history"); this lead-in badge card is the entry —
+          promoted from a caption link in the 2026-07-11 review. Local
+          data, so it stays useful even while reconnecting. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open statistics"
+        onPress={() => router.navigate('/stats')}
+        style={({ pressed }) => pressed && { opacity: Layout.pressedOpacity }}
+      >
+        <Card>
+          <View style={styles.statusRow}>
+            <View
+              style={styles.statusBadge}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              <MaterialIcons
+                name="insights"
+                size={28}
+                color={Palette.primaryCharcoal}
+              />
+            </View>
+            <View style={styles.statusSummary}>
+              <Text style={Type.title}>Statistics</Text>
+              <StatsCardCaption />
+            </View>
+            <MaterialIcons
+              name="chevron-right"
+              size={20}
+              color={Palette.secondarySlate}
+            />
+          </View>
+          {/* Live preview (Option 3 redesign): today's strip belongs with
+              the numbers it summarizes — one home for history, and a
+              better invitation to the stats screen than a static caption. */}
+          <PostureTimeline visible />
         </Card>
-      )}
+      </Pressable>
 
       <Text
         style={[Type.title, styles.sectionTitle]}
@@ -409,117 +468,176 @@ export default function ConnectedScreen() {
         Device actions
       </Text>
 
-      <ActionButton
-        label="Calibrate posture"
-        accessibilityLabel="Start calibration"
-        variant="primary"
-        icon={
-          <Image
-            source={require('../../assets/images/icon-calibrate.png')}
-            style={styles.buttonIcon}
-          />
-        }
-        disabled={actionsDisabled}
-        onPress={() => router.navigate('/calibrate')}
-      />
-      <ActionButton
-        label={
-          pendingAction === 'pause'
-            ? 'Switching…'
-            : vitals.paused
-              ? 'Switch to Training mode'
-              : 'Switch to Tracking mode'
-        }
-        accessibilityLabel={
-          vitals.paused
-            ? 'Switch to Training mode, turns slouch vibrations on'
-            : 'Switch to Tracking mode, senses posture without vibrating'
-        }
-        variant="outline"
-        icon={
-          <MaterialIcons
-            name={vitals.paused ? 'notifications-active' : 'visibility'}
-            size={20}
-            color={Palette.accentAmber}
-          />
-        }
-        loading={pendingAction === 'pause'}
-        disabled={actionsDisabled}
-        onPress={() => void handleToggleMode()}
-      />
-
-      {/* Occasional tools live behind a quiet disclosure so they don't cost
-          vertical space; a failed action force-opens it so the error is
-          never invisible. */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="More device tools"
-        accessibilityState={{ expanded: toolsOpen }}
-        onPress={() => setToolsOpen((open) => !open)}
-        style={({ pressed }) => [
-          styles.toolsToggle,
-          pressed && styles.toolsTogglePressed,
-        ]}
-      >
-        <MaterialIcons
-          name={toolsOpen ? 'expand-less' : 'expand-more'}
-          size={20}
-          color={Palette.secondarySlate}
+      {/* Option 1 (2026-07-11 actions redesign): every action is a compact
+          row in one card — all visible without scrolling. Chevrons only
+          where a row navigates or expands; the old "More tools" disclosure
+          is gone, and errors report into the always-visible status line
+          under the card. Labels stay frozen while an action runs (the
+          spinner replaces the icon) — async work must not resize a row. */}
+      <Card style={styles.actionsCard}>
+        <ActionRow
+          icon={
+            <Image
+              source={require('../../assets/images/icon-calibrate.png')}
+              style={styles.buttonIcon}
+            />
+          }
+          label="Calibrate posture"
+          accessibilityLabel="Start calibration"
+          disabled={actionsDisabled}
+          trailing={
+            <MaterialIcons
+              name="chevron-right"
+              size={20}
+              color={Palette.secondarySlate}
+            />
+          }
+          onPress={() => router.navigate('/calibrate')}
         />
-        <Text style={Type.caption}>
-          {toolsOpen ? 'Fewer tools' : 'More tools'}
-        </Text>
-      </Pressable>
-
-      {toolsOpen && (
-        <Animated.View entering={FadeIn.duration(150)} style={styles.toolsBody}>
-          <ActionButton
-            label={
-              pendingAction === 'vibration'
-                ? 'Sending vibration…'
-                : 'Test vibration'
-            }
-            accessibilityLabel="Send vibration test"
-            variant="outline"
-            icon={
-              <Image
-                source={require('../../assets/images/icon-vibration.png')}
-                style={styles.buttonIcon}
-              />
-            }
-            loading={pendingAction === 'vibration'}
-            disabled={actionsDisabled}
-            onPress={() => void handleTestVibration()}
-          />
-          <Card>
-            <View style={styles.statusRow}>
-              <View
-                style={styles.statusBadge}
-                accessibilityElementsHidden
-                importantForAccessibility="no-hide-descendants"
-              >
-                <MaterialIcons
-                  name="schedule"
-                  size={28}
-                  color={Palette.primaryCharcoal}
-                />
+        <View style={styles.actionDivider} />
+        <ActionRow
+          icon={
+            <MaterialIcons
+              name={vitals.paused ? 'notifications-active' : 'visibility'}
+              size={20}
+              color={Palette.primaryCharcoal}
+            />
+          }
+          label={
+            vitals.paused ? 'Switch to Training mode' : 'Switch to Tracking mode'
+          }
+          sublabel={
+            vitals.paused
+              ? 'Turns slouch vibrations on'
+              : 'Senses posture — no slouch vibrations'
+          }
+          accessibilityLabel={
+            vitals.paused
+              ? 'Switch to Training mode, turns slouch vibrations on'
+              : 'Switch to Tracking mode, senses posture without vibrating'
+          }
+          loading={pendingAction === 'pause'}
+          disabled={actionsDisabled}
+          onPress={() => void handleToggleMode()}
+        />
+        <View style={styles.actionDivider} />
+        <ActionRow
+          icon={
+            <Image
+              source={require('../../assets/images/icon-vibration.png')}
+              style={styles.buttonIcon}
+            />
+          }
+          label="Test vibration"
+          accessibilityLabel="Send vibration test"
+          loading={pendingAction === 'vibration'}
+          disabled={actionsDisabled}
+          onPress={() => void handleTestVibration()}
+        />
+        <View style={styles.actionDivider} />
+        <ActionRow
+          icon={
+            <MaterialIcons
+              name="history"
+              size={20}
+              color={Palette.primaryCharcoal}
+            />
+          }
+          label="This device"
+          accessibilityLabel="Device details"
+          expanded={infoOpen}
+          disabled={connectionState !== 'connected'}
+          trailing={
+            <MaterialIcons
+              name={infoOpen ? 'expand-less' : 'expand-more'}
+              size={20}
+              color={Palette.secondarySlate}
+            />
+          }
+          onPress={() => setInfoOpen((open) => !open)}
+        />
+        {infoOpen && device && connectionState === 'connected' && (
+          <Animated.View
+            entering={FadeIn.duration(150)}
+            style={styles.deviceInfoBody}
+          >
+            <DeviceInfoLines device={device} />
+            {/* Screenshot steering for the simulated device: pin a posture
+                instead of the 60 s auto-cycle. Dev builds only, and nested
+                behind this collapsed-by-default expansion so the control
+                can never leak into a marketing screenshot. A three-state
+                choice, so a compact segmented control — left-aligned with
+                the info lines, not a stack of centered buttons. */}
+            {__DEV__ && device.id === DEMO_DEVICE_ID && (
+              <View style={styles.demoSteering}>
+                <Text style={Type.caption}>Demo posture</Text>
+                <View style={styles.demoSegments}>
+                  {(
+                    [
+                      { value: 'slouch', label: 'Slouch' },
+                      { value: 'upright', label: 'Upright' },
+                      { value: null, label: 'Auto cycle' },
+                    ] as { value: DemoPostureOverride; label: string }[]
+                  ).map((option) => {
+                    const selected = demoOverride === option.value;
+                    return (
+                      <Pressable
+                        key={option.label}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Demo posture: ${option.label}`}
+                        accessibilityState={{ selected }}
+                        onPress={() => {
+                          setDemoPostureOverride(option.value);
+                          setDemoOverride(option.value);
+                        }}
+                        style={({ pressed }) => [
+                          styles.demoSegment,
+                          selected && styles.demoSegmentOn,
+                          pressed && !selected && {
+                            opacity: Layout.pressedOpacity,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            Type.caption,
+                            styles.demoSegmentText,
+                            selected && styles.demoSegmentTextOn,
+                          ]}
+                        >
+                          {option.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               </View>
-              <View style={styles.statusSummary}>
-                <Text style={Type.title}>Status</Text>
-                <Text
-                  style={[Type.body, !lastAction.ok && styles.errorText]}
-                  accessibilityLiveRegion="polite"
-                >
-                  Last action: {lastAction.text}
-                </Text>
-              </View>
-            </View>
-          </Card>
-          {device && connectionState === 'connected' && (
-            <DeviceInfoCard device={device} />
-          )}
-        </Animated.View>
-      )}
+            )}
+          </Animated.View>
+        )}
+        <View style={styles.actionDivider} />
+        <ActionRow
+          destructive
+          icon={
+            <MaterialIcons
+              name="power-settings-new"
+              size={20}
+              color={Palette.errorRed}
+            />
+          }
+          label="Disconnect"
+          accessibilityLabel="Disconnect from device"
+          loading={pendingAction === 'disconnect'}
+          disabled={busy}
+          onPress={() => void handleDisconnect()}
+        />
+      </Card>
+      <Text
+        style={[Type.caption, styles.statusLine, !lastAction.ok && styles.errorText]}
+        accessibilityLiveRegion="polite"
+      >
+        Last action: {lastAction.text}
+      </Text>
 
       {__DEV__ && DEV_PROBES_ENABLED && (
         <>
@@ -549,21 +667,6 @@ export default function ConnectedScreen() {
       )}
 
       <View style={styles.footer}>
-        <ActionButton
-          label={pendingAction === 'disconnect' ? 'Disconnecting…' : 'Disconnect'}
-          accessibilityLabel="Disconnect from device"
-          variant="ghost"
-          icon={
-            <MaterialIcons
-              name="power-settings-new"
-              size={20}
-              color={Palette.primaryCharcoal}
-            />
-          }
-          loading={pendingAction === 'disconnect'}
-          disabled={busy}
-          onPress={() => void handleDisconnect()}
-        />
         {/* Quiet caption action, About-link pattern: plain Disconnect keeps
             the device remembered for the next launch's auto-reconnect;
             this is the escape from that behavior. */}
@@ -618,12 +721,85 @@ function formatDuration(totalMinutes: number): string {
 }
 
 /**
- * Lifetime device counters behind More tools (Phase 9.3). Read once when
- * the disclosure mounts this card — on-demand data, not a subscription.
- * Copy hedges with "about": both decodes are single-session/probable
- * until the hardware confirmation walk (docs/protocol.html).
+ * One compact row of the actions card (Option 1, 2026-07-11 redesign) —
+ * icon bubble, label (+ optional sublabel), optional trailing glyph for
+ * rows that navigate or expand. While loading, the spinner replaces the
+ * icon and the label stays frozen: async work must not resize the row.
  */
-function DeviceInfoCard({ device }: { device: UprightGoDevice }) {
+function ActionRow({
+  icon,
+  label,
+  sublabel,
+  accessibilityLabel,
+  trailing,
+  destructive = false,
+  loading = false,
+  disabled = false,
+  expanded,
+  onPress,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  sublabel?: string;
+  accessibilityLabel: string;
+  trailing?: React.ReactNode;
+  destructive?: boolean;
+  loading?: boolean;
+  disabled?: boolean;
+  expanded?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ disabled: disabled || loading, busy: loading, expanded }}
+      disabled={disabled || loading}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.actionRow,
+        (pressed || (disabled && !loading)) && { opacity: Layout.pressedOpacity },
+      ]}
+    >
+      <View
+        style={[styles.actionIcon, destructive && styles.actionIconDestructive]}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+      >
+        {loading ? (
+          <ActivityIndicator
+            size="small"
+            color={destructive ? Palette.errorRed : Palette.primaryCharcoal}
+          />
+        ) : (
+          icon
+        )}
+      </View>
+      <View style={styles.actionText}>
+        <Text
+          style={[
+            Type.body,
+            styles.actionLabel,
+            destructive && styles.actionLabelDestructive,
+          ]}
+        >
+          {label}
+        </Text>
+        {sublabel !== undefined && <Text style={Type.caption}>{sublabel}</Text>}
+      </View>
+      {trailing}
+    </Pressable>
+  );
+}
+
+/**
+ * Lifetime device counters inside the "This device" expansion (Phase 9.3).
+ * Read once when the expansion mounts this component — on-demand data, not
+ * a subscription. Copy hedges with "about": both decodes are
+ * single-session/probable until the hardware confirmation walk
+ * (docs/protocol.html).
+ */
+function DeviceInfoLines({ device }: { device: UprightGoDevice }) {
   const [odometer, setOdometer] = useState<DeviceOdometer | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -657,29 +833,13 @@ function DeviceInfoCard({ device }: { device: UprightGoDevice }) {
     return null;
   }
   return (
-    <Card>
-      <View style={styles.statusRow}>
-        <View
-          style={styles.statusBadge}
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-        >
-          <MaterialIcons
-            name="history"
-            size={28}
-            color={Palette.primaryCharcoal}
-          />
-        </View>
-        <View style={styles.statusSummary} accessible>
-          <Text style={Type.title}>This device</Text>
-          {lines.map((line) => (
-            <Text key={line} style={Type.caption}>
-              {line}
-            </Text>
-          ))}
-        </View>
-      </View>
-    </Card>
+    <View accessible style={styles.deviceInfoLines}>
+      {lines.map((line) => (
+        <Text key={line} style={Type.caption}>
+          {line}
+        </Text>
+      ))}
+    </View>
   );
 }
 
@@ -776,26 +936,30 @@ function PostureTimeline({ visible }: { visible: boolean }) {
         ))}
         <View style={styles.timelineNowMarker} pointerEvents="none" />
       </View>
+      {/* The encoding legend moved to the stats screen's ⓘ tip (Option 3
+          redesign) — one caption fewer here, taught where users dig in. */}
       <Text style={[Type.caption, styles.timelineNowLabel]}>{nowLabel}</Text>
-      <Text style={Type.caption}>
-        Green low: upright · red tall: slouching
-      </Text>
     </View>
   );
 }
 
 /**
- * Today's aac9-accumulated stats in one caption line (Phase 9.2) — the
- * humble V1 surface, deliberately not a dashboard. Hidden until the first
- * worn minute lands, so a fresh day never opens with "0% upright". A leaf
- * subscriber like TiltCaption: ticks arrive every ~60 s, so re-render cost
- * is irrelevant, but screen-level state would still be the wrong altitude.
- * Not a live region — a once-a-minute announcement would be noise.
+ * The Statistics card's caption: today's headline numbers while there is
+ * data (Option 3 redesign — the card previews what the stats screen
+ * expands on), the feature description before the first worn minute so a
+ * fresh day never opens with "0% upright". A leaf subscriber like
+ * TiltCaption: ticks arrive every ~60 s, so re-render cost is irrelevant,
+ * but screen-level state would still be the wrong altitude. Not a live
+ * region — a once-a-minute announcement would be noise.
  */
-function TodayStatsCaption({ visible }: { visible: boolean }) {
+function StatsCardCaption() {
   const stats = useSessionStats();
-  if (!visible || stats.postureTicks === 0) {
-    return null;
+  if (stats.postureTicks === 0) {
+    return (
+      <Text style={Type.caption}>
+        Your day, week, and 30-day posture history
+      </Text>
+    );
   }
   // Time-based: measured slouched seconds over worn-connected time
   // (postureTicks ≈ worn minutes). Clamped — crediting granularity can
@@ -809,15 +973,14 @@ function TodayStatsCaption({ visible }: { visible: boolean }) {
       ),
     ),
   );
-  const time = formatDuration(stats.connectedTicks);
   const slouches =
     stats.slouchCount === 1 ? '1 slouch' : `${stats.slouchCount} slouches`;
   return (
     <Text
-      style={[Type.caption, styles.tiltLine]}
-      accessibilityLabel={`Today: ${uprightPercent} percent upright, ${slouches}, ${time} connected`}
+      style={Type.caption}
+      accessibilityLabel={`Today: ${uprightPercent} percent upright, ${slouches}`}
     >
-      Today: {uprightPercent}% upright · {slouches} · {time} connected
+      Today: {uprightPercent}% upright · {slouches}
     </Text>
   );
 }
@@ -837,16 +1000,34 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
   },
-  deviceRow: {
+  identityRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Layout.componentGap,
+    gap: 10,
   },
-  stateLabelRow: {
-    flexDirection: 'row',
+  identityBadge: {
+    // Same footprint as the action-row icon bubbles (icon system,
+    // specs/design_decisions.md).
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+    justifyContent: 'center',
+  },
+  identityName: {
+    flex: 1,
+  },
+  heroBlock: {
+    marginTop: 10,
+  },
+  postureHero: {
+    fontSize: 27,
+    fontWeight: '700',
+    lineHeight: 33,
+  },
+  heroQuiet: {
+    fontWeight: '400',
+    color: Palette.secondarySlate,
   },
   batteryChip: {
     flexDirection: 'row',
@@ -877,35 +1058,86 @@ const styles = StyleSheet.create({
   modePillText: {
     color: Palette.primaryCharcoal,
   },
-  toolsToggle: {
+  actionsCard: {
+    paddingVertical: 4,
+    gap: 0,
+  },
+  actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 8,
-  },
-  toolsTogglePressed: {
-    opacity: Layout.pressedOpacity,
-  },
-  toolsBody: {
     gap: Layout.componentGap,
+    paddingVertical: 11,
   },
-  stateBadge: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+  actionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: Palette.softAmber,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  actionIconDestructive: {
+    backgroundColor: 'transparent',
+  },
+  actionText: {
+    flex: 1,
+    gap: 0,
+  },
+  actionLabel: {
+    color: Palette.primaryCharcoal,
+    fontWeight: '600',
+  },
+  actionLabelDestructive: {
+    color: Palette.errorRed,
+    fontWeight: '400',
+  },
+  actionDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: Palette.borderDivider,
+  },
+  deviceInfoBody: {
+    paddingBottom: 11,
+    paddingLeft: 34 + Layout.componentGap,
+    gap: Layout.componentGap,
+  },
+  deviceInfoLines: {
+    gap: 2,
+  },
+  demoSteering: {
+    gap: 6,
+  },
+  demoSegments: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+    backgroundColor: Palette.backgroundWarmWhite,
+    borderWidth: 1,
+    borderColor: Palette.borderDivider,
+    borderRadius: 10,
+    padding: 2,
+  },
+  demoSegment: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  demoSegmentOn: {
+    backgroundColor: Palette.primaryCharcoal,
+  },
+  demoSegmentText: {
+    fontWeight: '600',
+  },
+  demoSegmentTextOn: {
+    color: Palette.cardSoftCream,
+  },
+  statusLine: {
+    paddingHorizontal: 4,
+    marginTop: -6,
   },
   stateBadgeOk: {
     backgroundColor: Palette.softGreen,
   },
   stateBadgeWarn: {
     backgroundColor: Palette.softAmber,
-  },
-  deviceSummary: {
-    flex: 1,
-    gap: 2,
   },
   statusRow: {
     flexDirection: 'row',
@@ -924,21 +1156,12 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
-  connectedLabel: {
-    fontWeight: '700',
-    color: Palette.successGreen,
-  },
   reconnectingLabel: {
-    fontWeight: '700',
+    marginTop: 10,
     color: Palette.warningOrange,
   },
-  postureRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    marginTop: 8,
-  },
   reconnectingHint: {
-    marginTop: 8,
+    marginTop: 4,
   },
   tiltLine: {
     marginTop: 4,
@@ -985,13 +1208,6 @@ const styles = StyleSheet.create({
   timelineSlouched: {
     height: 16,
     backgroundColor: Palette.errorRed,
-  },
-  calloutCard: {
-    backgroundColor: Palette.softAmber,
-    borderColor: Palette.accentAmber,
-  },
-  postureValue: {
-    fontWeight: '700',
   },
   sectionTitle: {
     marginTop: Layout.sectionGap - Layout.componentGap,

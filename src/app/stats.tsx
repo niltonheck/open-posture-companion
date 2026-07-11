@@ -299,10 +299,44 @@ export default function StatsScreen() {
             expandedKey={expandedKey}
             onSelectDay={expandFromChart}
           />
-          {recordedCount === 0 && (
+          {recordedCount === 0 ? (
             <Text style={Type.caption}>
               Each day you track fills one bar — your month builds up here.
             </Text>
+          ) : (
+            // Persistent legend: the grade colors must never carry the
+            // meaning alone (design log) — the ⓘ tip holds the formula,
+            // but the thresholds live right under the bars they color.
+            <View
+              style={styles.gradeLegend}
+              accessible
+              accessibilityLabel={`Bar colors: green ${GRADE_GREEN_MIN_PERCENT} percent or more upright, amber ${GRADE_AMBER_MIN_PERCENT} to ${GRADE_GREEN_MIN_PERCENT - 1}, red below ${GRADE_AMBER_MIN_PERCENT}`}
+            >
+              <View style={styles.gradeLegendItem}>
+                <View
+                  style={[styles.gradeDot, { backgroundColor: Palette.successGreen }]}
+                />
+                <Text style={Type.caption}>
+                  ≥ {GRADE_GREEN_MIN_PERCENT}% upright
+                </Text>
+              </View>
+              <View style={styles.gradeLegendItem}>
+                <View
+                  style={[styles.gradeDot, { backgroundColor: Palette.accentAmber }]}
+                />
+                <Text style={Type.caption}>
+                  {GRADE_AMBER_MIN_PERCENT}–{GRADE_GREEN_MIN_PERCENT - 1}%
+                </Text>
+              </View>
+              <View style={styles.gradeLegendItem}>
+                <View
+                  style={[styles.gradeDot, { backgroundColor: Palette.errorRed }]}
+                />
+                <Text style={Type.caption}>
+                  below {GRADE_AMBER_MIN_PERCENT}%
+                </Text>
+              </View>
+            </View>
           )}
         </Card>
 
@@ -802,6 +836,23 @@ const styles = StyleSheet.create({
   barDayToday: {
     fontWeight: '800',
     color: Palette.primaryCharcoal,
+  },
+  gradeLegend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 4,
+  },
+  gradeLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  gradeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 3,
   },
   listLabel: {
     marginTop: Layout.sectionGap - Layout.componentGap,

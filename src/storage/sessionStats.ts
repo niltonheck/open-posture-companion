@@ -6,7 +6,7 @@
  * Storage policy (sync, swallow failures) lives in kv.ts.
  */
 
-import { readJson, writeJson } from './kv';
+import { listKeys, readJson, removeKey, writeJson } from './kv';
 
 const KEY_PREFIX = 'session-stats.v1:';
 
@@ -74,30 +74,77 @@ export function localDateKey(now: Date = new Date()): string {
   return `${now.getFullYear()}-${month}-${day}`;
 }
 
+function parseDayStats(parsed: unknown): DayStats | null {
+  if (typeof parsed !== 'object' || parsed === null) {
+    return null;
+  }
+  const record = parsed as Record<string, unknown>;
+  const stats: DayStats = { ...ZERO_DAY_STATS };
+  for (const field of DAY_STATS_FIELDS) {
+    const value = record[field];
+    if (value === undefined) {
+      continue; // Written before the field existed — keep the zero
+      //           value instead of resetting the whole day.
+    }
+    if (typeof value !== typeof ZERO_DAY_STATS[field]) {
+      return null;
+    }
+    (stats as unknown as Record<string, unknown>)[field] = value;
+  }
+  return stats;
+}
+
 export function loadDayStats(dateKey: string): DayStats {
-  return (
-    readJson(KEY_PREFIX + dateKey, (parsed) => {
-      if (typeof parsed !== 'object' || parsed === null) {
-        return null;
-      }
-      const record = parsed as Record<string, unknown>;
-      const stats: DayStats = { ...ZERO_DAY_STATS };
-      for (const field of DAY_STATS_FIELDS) {
-        const value = record[field];
-        if (value === undefined) {
-          continue; // Written before the field existed — keep the zero
-          //           value instead of resetting the whole day.
-        }
-        if (typeof value !== typeof ZERO_DAY_STATS[field]) {
-          return null;
-        }
-        (stats as unknown as Record<string, unknown>)[field] = value;
-      }
-      return stats;
-    }) ?? ZERO_DAY_STATS
-  );
+  return readJson(KEY_PREFIX + dateKey, parseDayStats) ?? ZERO_DAY_STATS;
 }
 
 export function saveDayStats(dateKey: string, stats: DayStats): void {
   writeJson(KEY_PREFIX + dateKey, stats);
+}
+
+/** Days of history the Statistics screen keeps (specs/design_decisions.md). */
+export const HISTORY_DAYS = 30;
+
+export interface HistoryDay {
+  dateKey: string;
+  /** 0 = today, 1 = yesterday, … */
+  daysAgo: number;
+  /** null = no record for that day (never connected). */
+  stats: DayStats | null;
+}
+
+/** Local calendar day `daysAgo` days before `now`, as a storage date key. */
+export function dateKeyDaysAgo(daysAgo: number, now: Date = new Date()): string {
+  const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo);
+  return localDateKey(day);
+}
+
+/**
+ * The last `count` calendar days, newest first — the Statistics screen's
+ * read path. Retention happens here, lazily (specs/design_decisions.md):
+ * any session-stats key older than the window is deleted on the way
+ * through, so no rollover/connect hook is needed and a failed prune only
+ * means it runs again next read. ISO date keys compare correctly as
+ * strings, so no parsing is involved.
+ */
+export function loadRecentDays(
+  count: number = HISTORY_DAYS,
+  now: Date = new Date(),
+): HistoryDay[] {
+  const oldestKept = KEY_PREFIX + dateKeyDaysAgo(count - 1, now);
+  for (const key of listKeys(KEY_PREFIX)) {
+    if (key < oldestKept) {
+      removeKey(key);
+    }
+  }
+  const days: HistoryDay[] = [];
+  for (let daysAgo = 0; daysAgo < count; daysAgo += 1) {
+    const dateKey = dateKeyDaysAgo(daysAgo, now);
+    days.push({
+      dateKey,
+      daysAgo,
+      stats: readJson(KEY_PREFIX + dateKey, parseDayStats),
+    });
+  }
+  return days;
 }

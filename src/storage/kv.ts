@@ -37,3 +37,13 @@ export function removeKey(key: string): void {
     console.log(`[storage] remove failed for ${key}:`, error);
   }
 }
+
+/** All stored keys with the given prefix; empty on failure, same policy. */
+export function listKeys(prefix: string): string[] {
+  try {
+    return Storage.getAllKeysSync().filter((key) => key.startsWith(prefix));
+  } catch (error) {
+    console.log(`[storage] key listing failed for ${prefix}*:`, error);
+    return [];
+  }
+}

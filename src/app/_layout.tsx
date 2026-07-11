@@ -38,6 +38,8 @@ export default function RootLayout() {
         />
         {/* In-page back arrow + centered title per the calibrate mockup. */}
         <Stack.Screen name="calibrate" options={{ headerShown: false }} />
+        {/* Statistics sub-flow off /connected — PageHeader, swipe-back on. */}
+        <Stack.Screen name="stats" options={{ headerShown: false }} />
         <Stack.Screen name="about" options={{ headerShown: false }} />
       </Stack>
       </SessionStatsProvider>

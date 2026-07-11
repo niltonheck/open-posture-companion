@@ -23,6 +23,11 @@ import { AppHeader } from '@/components/app-header';
 import { BluetoothPulse } from '@/components/bluetooth-pulse';
 import { Card } from '@/components/card';
 import { Disclaimer } from '@/components/disclaimer';
+import {
+  formatMinuteOfDay,
+  PostureRibbon,
+  wornWindow,
+} from '@/components/posture-ribbon';
 import { Layout, Palette } from '@/constants/palette';
 import { Type } from '@/constants/typography';
 // Dev-only probe triggers (Phase 5) — sanctioned harness exception to the
@@ -454,10 +459,10 @@ export default function ConnectedScreen() {
               color={Palette.secondarySlate}
             />
           </View>
-          {/* Live preview (Option 3 redesign): today's strip belongs with
-              the numbers it summarizes — one home for history, and a
-              better invitation to the stats screen than a static caption. */}
-          <PostureTimeline visible />
+          {/* Live preview: today's strip belongs with the numbers it
+              summarizes — one home for history, and a better invitation to
+              the stats screen than a static caption. */}
+          <TodayStripPreview />
         </Card>
       </Pressable>
 
@@ -688,6 +693,27 @@ export default function ConnectedScreen() {
           </Text>
         </Pressable>
         <Disclaimer />
+        {/* Same quiet footer link as home (index.tsx) — placement and
+            metrics match so the two screens read as one pattern. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="About this app"
+          onPress={() => router.navigate('/about')}
+          // Visual is a quiet caption row (~26px); hitSlop makes up the
+          // 44px minimum target (docs/product.html).
+          hitSlop={{ top: 9, bottom: 9 }}
+          style={({ pressed }) => [
+            styles.aboutLink,
+            pressed && styles.forgetLinkDim,
+          ]}
+        >
+          <Text style={Type.caption}>About this app</Text>
+          <MaterialIcons
+            name="chevron-right"
+            size={14}
+            color={Palette.secondarySlate}
+          />
+        </Pressable>
       </View>
       </ScrollView>
     </SafeAreaView>
@@ -849,96 +875,61 @@ function minuteOfDayNow(): number {
 }
 
 /**
- * Minutes shown either side of "now" — a one-hour window total. Slots
- * stretch to the card width, so widening the span only makes them thinner.
+ * Today preview inside the Statistics card (2026-07-11 strip follow-up,
+ * Option 2): the same auto-fit ribbon the stats screen's expanded Today
+ * row renders — worn window, start/mid/end time labels, now marker — so
+ * the card is a true miniature of the screen it opens. Replaced the
+ * now-centered ±30 min strip, whose permanently empty future half read
+ * as a glitch. Hidden until the first worn minute (the card caption
+ * carries the empty state); the encoding legend lives in the stats
+ * screen's ⓘ tip.
  */
-const TIMELINE_HALF_SPAN_MINUTES = 30;
-
-/**
- * Posture strip: a fixed now-centered window that always fills the card
- * width — the current minute sits under the center marker, the last half
- * hour to its left, the (empty) next half hour to its right; the strip
- * slides as time advances. One slot per minute, upright = short green,
- * slouched = tall red, no data (off, unworn, gap, future) = faint dot.
- * Height differences carry the meaning alongside color (never color alone
- * — docs/product.html); the whole element reads as one day summary to
- * screen readers. History-only by design (the live "Posture:" line above
- * is the real-time cue); the provider backfills tick-cadence gaps.
- */
-function PostureTimeline({ visible }: { visible: boolean }) {
+function TodayStripPreview() {
   const stats = useSessionStats();
   const [nowMinute, setNowMinute] = useState(minuteOfDayNow);
   useEffect(() => {
     // Same-value updates bail out of re-rendering, so this only costs a
-    // render once per minute boundary.
+    // render once per minute boundary — keeps the marker honest while the
+    // device is connected but not worn (no ticks, no other re-renders).
     const interval = setInterval(() => setNowMinute(minuteOfDayNow()), 10_000);
     return () => clearInterval(interval);
   }, []);
 
-  const flags = stats.minuteFlags;
-  let hasRecorded = false;
+  const window = wornWindow(stats.minuteFlags);
+  if (!window) {
+    return null;
+  }
   let uprightCount = 0;
   let slouchedCount = 0;
-  for (let minute = 0; minute < flags.length; minute += 1) {
-    if (flags[minute] === 'u') {
-      hasRecorded = true;
+  for (let minute = 0; minute < stats.minuteFlags.length; minute += 1) {
+    if (stats.minuteFlags[minute] === 'u') {
       uprightCount += 1;
-    } else if (flags[minute] === 's') {
-      hasRecorded = true;
+    } else if (stats.minuteFlags[minute] === 's') {
       slouchedCount += 1;
     }
   }
-  if (!visible || !hasRecorded) {
-    return null;
-  }
-
-  // Minutes outside today (window crossing midnight) render as dots, same
-  // as unrecorded ones — flags[m] is undefined there.
-  const slots: string[] = [];
-  for (
-    let minute = nowMinute - TIMELINE_HALF_SPAN_MINUTES;
-    minute <= nowMinute + TIMELINE_HALF_SPAN_MINUTES;
-    minute += 1
-  ) {
-    const flag = minute >= 0 ? flags[minute] : undefined;
-    slots.push(flag === 'u' || flag === 's' ? flag : '.');
-  }
-  const nowLabel = `${String(Math.floor(nowMinute / 60)).padStart(2, '0')}:${String(
-    nowMinute % 60,
-  ).padStart(2, '0')}`;
 
   return (
-    <View
-      accessible
-      accessibilityLabel={`Posture timeline for today: ${uprightCount} ${
-        uprightCount === 1 ? 'minute' : 'minutes'
-      } upright, ${slouchedCount} ${
-        slouchedCount === 1 ? 'minute' : 'minutes'
-      } slouching`}
-      style={styles.timeline}
-    >
-      <View style={styles.timelineRow}>
-        {/* Minutes without data — past gaps and the future half alike —
-            render as grey baseline dashes in the same per-minute rhythm
-            as the bars, so the strip reads as one continuous track. */}
-        {slots.map((flag, index) => (
-          <View
-            key={index}
-            style={[
-              styles.timelineSlot,
-              flag === 'u'
-                ? styles.timelineUpright
-                : flag === 's'
-                  ? styles.timelineSlouched
-                  : styles.timelineEmpty,
-            ]}
-          />
-        ))}
-        <View style={styles.timelineNowMarker} pointerEvents="none" />
+    <View style={styles.todayStrip}>
+      <PostureRibbon
+        minuteFlags={stats.minuteFlags}
+        window={window}
+        nowMinute={nowMinute}
+        accessibilityLabel={`Posture timeline for today: ${uprightCount} ${
+          uprightCount === 1 ? 'minute' : 'minutes'
+        } upright, ${slouchedCount} ${
+          slouchedCount === 1 ? 'minute' : 'minutes'
+        } slouching`}
+      />
+      {/* Auto-fit means a short session fills the full width — these
+          labels carry the truth about the real span (design log). */}
+      <View style={styles.todayStripTicks}>
+        <Text style={Type.caption}>{formatMinuteOfDay(window.start)}</Text>
+        <Text style={Type.caption}>
+          {formatMinuteOfDay(Math.round((window.start + window.end) / 2))}
+        </Text>
+        <Text style={Type.caption}>{formatMinuteOfDay(window.end)}</Text>
       </View>
-      {/* The encoding legend moved to the stats screen's ⓘ tip (Option 3
-          redesign) — one caption fewer here, taught where users dig in. */}
-      <Text style={[Type.caption, styles.timelineNowLabel]}>{nowLabel}</Text>
     </View>
   );
 }
@@ -1166,48 +1157,13 @@ const styles = StyleSheet.create({
   tiltLine: {
     marginTop: 4,
   },
-  timeline: {
+  todayStrip: {
     marginTop: 8,
     gap: 4,
   },
-  timelineRow: {
+  todayStripTicks: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 1,
-    height: 16,
-  },
-  timelineSlot: {
-    // Equal shares of the card width — the strip always fills it exactly.
-    flex: 1,
-    height: 3,
-    borderRadius: 1,
-  },
-  timelineEmpty: {
-    // borderDivider is imperceptible at 3px on the cream card; slate at
-    // low opacity keeps the empty dashes recessive but clearly there.
-    backgroundColor: Palette.secondarySlate,
-    opacity: 0.35,
-  },
-  timelineNowMarker: {
-    position: 'absolute',
-    left: '50%',
-    marginLeft: -1,
-    top: 0,
-    bottom: 0,
-    width: 2,
-    borderRadius: 1,
-    backgroundColor: Palette.primaryCharcoal,
-  },
-  timelineNowLabel: {
-    alignSelf: 'center',
-  },
-  timelineUpright: {
-    height: 8,
-    backgroundColor: Palette.successGreen,
-  },
-  timelineSlouched: {
-    height: 16,
-    backgroundColor: Palette.errorRed,
+    justifyContent: 'space-between',
   },
   sectionTitle: {
     marginTop: Layout.sectionGap - Layout.componentGap,
@@ -1223,6 +1179,13 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingVertical: 8,
     paddingHorizontal: 12,
+  },
+  aboutLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    paddingVertical: 4,
   },
   forgetLinkDim: {
     opacity: Layout.pressedOpacity,

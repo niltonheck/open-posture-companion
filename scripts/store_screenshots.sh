@@ -1,5 +1,5 @@
 #!/bin/bash
-# App Store screenshot capture + finalize (docs/store-listing.md workflow).
+# App Store screenshot capture + finalize.
 #
 #   scripts/store_screenshots.sh snap <label>   # capture phone screen (USB) → store/screenshots/raw/
 #   scripts/store_screenshots.sh finalize       # raw/ → final/ at the ASC 6.9" size (1320×2868)

@@ -6,9 +6,10 @@ the mark's alpha bbox, and composite it centered. No resampling.
 """
 import zlib, struct, subprocess, os
 
-SRC = '/Volumes/WD_BLACK_SN850X_1TB/code/pessoal/open-posture-companion/assets/images/logo-mark.svg'
-OUT = '/Volumes/WD_BLACK_SN850X_1TB/code/pessoal/open-posture-companion/assets/images'
 S = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(S)
+SRC = os.path.join(ROOT, 'assets/images/logo-mark.svg')
+OUT = os.path.join(ROOT, 'assets/images')
 
 def read_png(path):
     d = open(path, 'rb').read()

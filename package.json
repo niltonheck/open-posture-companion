@@ -47,5 +47,12 @@
     "eslint-config-expo": "~55.0.1",
     "typescript": "~5.9.2"
   },
-  "private": true
+  "private": true,
+  "description": "Independent open-source companion app for the discontinued Upright GO 1 posture trainer",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/niltonheck/open-posture-companion.git"
+  },
+  "author": "Nilton Heck"
 }

@@ -2,9 +2,10 @@
 (3x of the 208pt display size), rendered from the normalized logo-mark.svg."""
 import zlib, struct, subprocess, os
 
-SRC = '/Volumes/WD_BLACK_SN850X_1TB/code/pessoal/open-posture-companion/assets/images/logo-mark.svg'
-OUT = '/Volumes/WD_BLACK_SN850X_1TB/code/pessoal/open-posture-companion/assets/images/logo-hero.png'
 S = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(S)
+SRC = os.path.join(ROOT, 'assets/images/logo-mark.svg')
+OUT = os.path.join(ROOT, 'assets/images/logo-hero.png')
 
 def read_png(path):
     d = open(path, 'rb').read()

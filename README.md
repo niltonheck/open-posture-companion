@@ -53,11 +53,9 @@ Other structural points:
 - **Tiered subscriptions**: the high-frequency tilt stream runs only in the foreground; backgrounded, the app listens to the once-a-minute telemetry tick and rare vitals notifications.
 - **Persistence stays out of the device layer** — only hooks touch `src/storage/`.
 
-Full documentation lives in [`docs/`](docs/) (open `docs/index.html`): product & positioning, architecture, the complete BLE protocol reference, design system, decision records, and known gaps. `specs/` holds the design tokens and mockups; `notes/` holds per-phase build notes.
+The complete hardware-verified BLE protocol reference (GATT map, byte formats, decode notes) lives in the [reverse-engineering repo](https://github.com/niltonheck/upright-go-1-reverse-engineering).
 
 ## Main design decisions
-
-Full ADRs with context and trade-offs are in [`docs/decisions.html`](docs/decisions.html). The short version:
 
 | ADR | Decision |
 |---|---|
@@ -70,7 +68,7 @@ Full ADRs with context and trade-offs are in [`docs/decisions.html`](docs/decisi
 | 007 | Minimal V0 scope: one stack flow, two device actions, one live status line — no dashboards, scores, or settings |
 | 008 | iOS background BLE monitoring: GO — foreground-only stats defeat the product; tiered fidelity bounds the battery cost |
 
-Product-level principles (see `docs/product.html`):
+Product-level principles:
 
 - **Trademark-safe identity** — "Upright GO" appears only as compatibility text, never as the product identity. Third-party hardware is depicted only as original line illustrations, never photos or vendor assets.
 - **Non-medical language everywhere** — posture *reminders*, never treatment or correction claims.
@@ -93,7 +91,7 @@ npx expo start
 
 Once the dev client is installed, JS iteration only needs `expo start` — the phone connects to Metro over LAN, so daily development works fine from a machine that can't build iOS (ADR-003).
 
-**Status:** iOS is the validated platform; Android configuration is in place but on-device verification is pending (TODO 4.4).
+**Status:** iOS is the validated platform; Android configuration is in place but on-device verification is pending.
 
 ## Contributing
 
@@ -101,22 +99,21 @@ Contributions are welcome — this project exists so owners of discontinued hard
 
 **Where to start**
 
-- `TODO.md` is the live task breakdown, ordered by dependency and annotated with what's done, pending, and blocked on hardware sessions.
-- `docs/gaps.html` lists open protocol questions and the post-V0 roadmap.
+- Check the open issues — protocol questions, Android verification, and roadmap items are tracked there.
 - Protocol discoveries belong upstream in the [reverse-engineering repo](https://github.com/niltonheck/upright-go-1-reverse-engineering) as well as here.
 
 **Ground rules**
 
 1. **Never touch firmware characteristics** (ADR-006). This is a hard constraint — no exceptions, no "read-only experiments" against firmware endpoints.
 2. **Respect the layering** (ADR-002): GATT UUIDs and command bytes only in `src/device/characteristics.ts`; screens use hooks, hooks use the device layer.
-3. **Follow the design system**: every color goes through `Palette` (`src/constants/palette.ts`), every text metric through `Type` (`src/constants/typography.ts`). The binding rules live in `specs/design_decisions.md` and `docs/design.html`.
-4. **Keep the copy safe**: plain, non-medical language; approved/avoided strings are listed in `docs/product.html`. The "not a medical device" disclaimer is mandatory where the docs say it is.
-5. **Stay lean**: V0's non-goals (no accounts, no cloud, no gamification, data stays on-device) are product decisions, not gaps. Propose scope changes as an ADR before building.
-6. Run `npm run lint` before submitting; keep `docs/` in sync when behavior or protocol knowledge changes.
-
-Significant architectural changes should come with a decision record in the style of `docs/decisions.html`.
+3. **Follow the design system**: every color goes through `Palette` (`src/constants/palette.ts`), every text metric through `Type` (`src/constants/typography.ts`) — no hex literals or ad-hoc font sizes in screens.
+4. **Keep the copy safe**: plain, non-medical language — posture *reminders*, never correction or treatment claims. The "not a medical device" disclaimer is mandatory on user-facing surfaces.
+5. **Stay lean**: V0's non-goals (no accounts, no cloud, no gamification, data stays on-device) are product decisions, not gaps. Propose scope changes in an issue before building.
+6. Run `npm run lint` before submitting.
 
 ## License & disclaimer
+
+Released under the [MIT License](LICENSE).
 
 This is an independent open-source interoperability project. It is not affiliated with, endorsed by, sponsored by, or approved by UPRIGHT or any related company. "Upright GO" is used only to identify compatibility with original Upright GO 1 hardware.
 

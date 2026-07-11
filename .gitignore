@@ -44,3 +44,14 @@ app-example
 
 # editor swap files
 *.swp
+
+# internal working docs — kept local, deliberately unpublished (2026-07-11
+# pre-publish audit; full history backup in ../open-posture-companion-private-backup)
+/docs
+/notes
+/specs
+/TODO.md
+/CLAUDE.md
+/AGENTS.md
+/.claude
+/assets/brand

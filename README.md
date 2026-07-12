@@ -6,14 +6,20 @@ Built with Expo (SDK 55) and React Native, on top of a community [reverse-engine
 
 > This is an independent open-source interoperability project. It is not affiliated with, endorsed by, sponsored by, or approved by UPRIGHT or any related company. "Upright GO" is used only to identify compatibility with original Upright GO 1 hardware. **This app is not a medical device.**
 
+<p align="center">
+  <img src="store/screenshots/final/03-connected-live.png" width="240" alt="Connected screen: live posture status, mode, and today's stats" />
+  <img src="store/screenshots/final/04-statistics.png" width="240" alt="Statistics screen: daily tiles and a color-graded 30-day chart" />
+  <img src="store/screenshots/final/05-stats-history.png" width="240" alt="History calendar with expandable per-day timelines" />
+</p>
+
 ## What it does
 
 The app is deliberately a *companion*, not a wellness dashboard: connect to the device, keep it calibrated, and quietly gather posture data on-device.
 
 **Device control**
 
-- **Scan & connect** — finds nearby devices advertising as `UprightGO`, with plain-language signal strength (Strong / Medium / Weak). Remembers your device and reconnects directly on launch.
-- **Guided calibration** — set your upright reference posture. The app reads the device's stored calibration record and adopts it on connect, so a fresh app launch against an already-calibrated device just works.
+- **Scan & connect** — finds nearby devices advertising as `UprightGO`, with plain-language signal strength (Strong / Medium / Weak). Remembers your device and reconnects directly on launch; identically-named units are told apart by a short device code and a "Last used" badge.
+- **Guided calibration** — set your upright reference posture. The app reads the device's stored calibration record and adopts it on connect, so an already-calibrated device just works; a device that connects uncalibrated (which happens after every power-off) is offered the calibration step right away — skippable, never forced.
 - **Training / Tracking modes** — toggle between Training (slouch vibrations on) and Tracking (device senses only), mirroring the hardware button.
 - **Test vibration** — one-tap sanity check that the link works.
 
@@ -23,13 +29,16 @@ The app is deliberately a *companion*, not a wellness dashboard: connect to the 
 - Device vitals: battery percentage, charging state, and whether the device is currently worn.
 - Auto-reconnect with exponential backoff on unexpected drops.
 
-**Posture stats (on-device only)**
+**Posture statistics (on-device only)**
 
-- Session stats accumulated from the device's per-minute telemetry: today's upright %, slouch count, connected time, and a day timeline.
+- **Statistics screen** — today, rolling 7 days, or 30 days at a glance: upright %, slouched time, worn time, and slouch counts, plus a color-graded 30-day chart of daily upright %.
+- **Day-by-day history** — every recorded day expands into a minute-resolution timeline; tap any segment for the exact period ("11:18 – 11:22 · Slouched 4 min"). History is kept for 30 days, then pruned.
 - **Background monitoring (iOS)** — the app keeps gathering the ~1/min telemetry while backgrounded or the phone is locked, with CoreBluetooth state restoration so iOS can resurrect the connection after an eviction. The chatty tilt stream stays foreground-only to bound battery cost (see ADR-008).
 - Device odometer: lifetime usage minutes and connection count decoded from the device.
 
-**Privacy-first by construction**: no accounts, no cloud sync, no analytics. All data stays on the phone (`expo-sqlite` key-value storage).
+**Demo mode** — five taps on the About screen's version line surface a simulated device that drives the entire pipeline (live status, calibration, stats, a 30-day history) with realistic data. Built for App Store review, equally useful for developing without hardware; simulated data never touches real history.
+
+**Privacy-first by construction**: no accounts, no cloud sync, no analytics. All data stays on the phone (`expo-sqlite` key-value storage) and self-prunes after 30 days — see [PRIVACY.md](PRIVACY.md).
 
 ## Architecture
 
@@ -90,6 +99,8 @@ npx expo start
 ```
 
 Once the dev client is installed, JS iteration only needs `expo start` — the phone connects to Metro over LAN, so daily development works fine from a machine that can't build iOS (ADR-003).
+
+**No hardware? Use demo mode.** In the app: About → tap the version line five times → scan → connect to the simulated device. The whole BLE pipeline runs against a scripted transport, so every screen has realistic data to develop against.
 
 **Status:** iOS is the validated platform; Android configuration is in place but on-device verification is pending.
 

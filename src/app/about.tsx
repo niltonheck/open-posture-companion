@@ -120,7 +120,13 @@ export default function AboutScreen() {
           <Text style={[Type.title, styles.centered]}>
             Open Posture Companion
           </Text>
-          <Pressable onPress={handleVersionTap}>
+          {/* Quiet at rest (no role, no affordance — the gesture stays
+              discoverable only via the review notes), but each tap fades
+              the line while pressed so the finger knows it landed. */}
+          <Pressable
+            onPress={handleVersionTap}
+            style={({ pressed }) => pressed && styles.pressed}
+          >
             <Text style={[Type.caption, styles.centered]}>
               {/* "· demo" keeps the hidden toggle's state always visible. */}
               Version {version}

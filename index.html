@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Open Posture Companion — keep your Upright GO 1 working</title>
+  <meta name="description" content="Independent, open-source companion app for the discontinued Upright GO 1 posture trainer. Private by construction — everything stays on your phone." />
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <meta property="og:title" content="Open Posture Companion — keep your Upright GO 1 working" />
+  <meta property="og:description" content="Independent, open-source companion app for the discontinued Upright GO 1 posture trainer. Private by construction — everything stays on your phone." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://niltonheck.codeberg.page/open-posture-companion/assets/03-connected-live.jpg" />
+</head>
+<body>
+<style>
+  /* Committed to the app's own warm-light world (the app is deliberately
+     light-only), so the page holds it in every viewer theme. */
+  :root {
+    --bg: #F8F3EA; --card: #FFFDF8; --ink: #202832; --slate: #56616D;
+    --amber: #F5A623; --amber-text: #8F5F00; --soft-amber: #FFF1D6;
+    --green: #4FA66A; --red: #D9534F; --border: #E7DED0;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    line-height: 1.55;
+  }
+  a { color: var(--amber-text); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 4px; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 24px; }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 26px 0 0; }
+  .tile {
+    width: 44px; height: 44px; border-radius: 12px; background: var(--card);
+    border: 1px solid var(--border); display: flex; align-items: center; justify-content: center;
+  }
+  .tile img { width: 34px; height: 34px; }
+  .wordmark { font-size: 19px; font-weight: 400; letter-spacing: -0.01em; }
+
+  .hero { padding: 72px 0 40px; max-width: 640px; }
+  h1 {
+    font-size: clamp(34px, 6vw, 52px); font-weight: 700; line-height: 1.08;
+    letter-spacing: -0.025em; margin: 0 0 20px; text-wrap: balance;
+  }
+  h1 .dot { color: var(--amber); }
+  .hero p { font-size: 18px; color: var(--slate); margin: 0 0 30px; max-width: 54ch; }
+  .hero p strong { color: var(--ink); font-weight: 600; }
+  .actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; border-radius: 16px;
+    padding: 15px 26px; font-size: 16px; font-weight: 700; border: none; cursor: pointer;
+  }
+  .btn.primary { background: var(--ink); color: var(--card); }
+  .btn.primary .soon { font-weight: 400; opacity: 0.75; font-size: 13px; }
+  .btn.outline {
+    background: var(--card); color: var(--ink); font-weight: 400;
+    border: 1.5px solid var(--amber);
+  }
+  .mirror-note { font-size: 13px; color: var(--slate); width: 100%; margin-top: 2px; }
+
+  /* The app's signature: the posture ribbon. Green low = upright,
+     red tall = slouched, charcoal marker = now. */
+  .ribbon-band { padding: 26px 0 8px; }
+  .ribbon { display: flex; align-items: flex-end; gap: 2px; height: 22px; position: relative; }
+  .seg { flex: 1; border-radius: 1.5px; }
+  .seg.u { height: 10px; background: var(--green); }
+  .seg.s { height: 22px; background: var(--red); }
+  .seg.n { height: 4px; background: var(--slate); opacity: 0.3; }
+  .nowmark { position: absolute; right: 8%; top: -3px; bottom: -3px; width: 2.5px; border-radius: 2px; background: var(--ink); }
+  .ribbon-caption { display: flex; justify-content: space-between; font-size: 12px; color: var(--slate); margin-top: 8px; font-variant-numeric: tabular-nums; }
+
+  .shots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; padding: 44px 0 8px; }
+  @media (max-width: 680px) { .shots { grid-template-columns: 1fr; max-width: 320px; margin: 0 auto; } }
+  .shot { margin: 0; }
+  .shot img {
+    width: 100%; height: auto; border-radius: 26px;
+    border: 1px solid var(--border); box-shadow: 0 22px 40px -28px rgba(32,40,50,0.45);
+  }
+  .shot figcaption { text-align: center; font-size: 13px; color: var(--slate); margin-top: 12px; }
+
+  .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 44px 0; }
+  @media (max-width: 680px) { .facts { grid-template-columns: 1fr; } }
+  .fact { background: var(--card); border: 1px solid var(--border); border-radius: 22px; padding: 22px; }
+  .fact h2 { font-size: 16px; margin: 0 0 8px; font-weight: 700; }
+  .fact p { font-size: 14.5px; color: var(--slate); margin: 0; }
+
+  .source {
+    background: var(--soft-amber); border-radius: 22px; padding: 22px 26px;
+    display: flex; gap: 10px 28px; flex-wrap: wrap; align-items: baseline;
+    font-size: 14.5px; color: var(--amber-text); margin-bottom: 8px;
+  }
+  .source b { color: var(--ink); font-weight: 700; margin-right: 6px; }
+
+  footer { padding: 40px 0 56px; font-size: 13px; color: var(--slate); max-width: 62ch; }
+  footer p { margin: 0 0 10px; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .nowmark { animation: breathe 2.4s ease-in-out infinite; }
+    @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="tile"><img src="assets/logo.png" alt="" /></div>
+    <span class="wordmark">Open Posture Companion</span>
+  </header>
+
+  <section class="hero">
+    <h1>Keep your Upright GO&nbsp;1 working<span class="dot">.</span></h1>
+    <p>The official app was discontinued. The hardware still works. This independent,
+      open-source companion keeps it useful — connect, calibrate, get gentle posture
+      reminders, and see <strong>30 days of history</strong>.
+      <strong>Everything stays on your phone.</strong></p>
+    <div class="actions">
+      <button class="btn primary" disabled aria-disabled="true">App&nbsp;Store <span class="soon">— in review</span></button>
+      <a class="btn outline" href="https://codeberg.org/niltonheck/open-posture-companion">Source on Codeberg</a>
+      <span class="mirror-note">Also mirrored on <a href="https://github.com/niltonheck/open-posture-companion">GitHub</a> · MIT licensed</span>
+    </div>
+  </section>
+
+  <section class="ribbon-band" aria-label="A day of posture, as the app draws it">
+    <div class="ribbon" id="ribbon"><div class="nowmark"></div></div>
+    <div class="ribbon-caption"><span>08:50</span><span>a day of posture, as the app draws it</span><span>20:39</span></div>
+  </section>
+
+  <section class="shots">
+    <figure class="shot"><img src="assets/03-connected-live.jpg" alt="Live posture, at a glance" loading="lazy" /><figcaption>Live posture, at a glance</figcaption></figure>
+<figure class="shot"><img src="assets/04-statistics.jpg" alt="30 days of statistics" loading="lazy" /><figcaption>30 days of statistics</figcaption></figure>
+<figure class="shot"><img src="assets/05-stats-history.jpg" alt="History down to the minute" loading="lazy" /><figcaption>History down to the minute</figcaption></figure>
+  </section>
+
+  <section class="facts">
+    <div class="fact">
+      <h2>Private by construction</h2>
+      <p>No account, no cloud, no analytics. Posture data lives on your phone and
+        self-prunes after 30 days. Bluetooth talks only to your device.</p>
+    </div>
+    <div class="fact">
+      <h2>Honest engineering</h2>
+      <p>Built on a hardware-verified, community
+        <a href="https://github.com/niltonheck/upright-go-1-reverse-engineering">reverse-engineered BLE protocol</a> —
+        findings flow back upstream.</p>
+    </div>
+    <div class="fact">
+      <h2>Try it without the hardware</h2>
+      <p>A built-in demo mode simulates a device end to end, so you can explore every
+        screen — or contribute — before dusting off your GO.</p>
+    </div>
+  </section>
+
+  <div class="source">
+    <span><b>Open source.</b> Development on Codeberg, mirrored to GitHub.</span>
+    <a href="https://codeberg.org/niltonheck/open-posture-companion">Codeberg</a>
+    <a href="https://github.com/niltonheck/open-posture-companion">GitHub</a>
+    <a href="https://github.com/niltonheck/open-posture-companion/blob/main/PRIVACY.md">Privacy policy</a>
+  </div>
+
+  <footer>
+    <p>This is an independent open-source interoperability project. It is not affiliated
+      with, endorsed by, sponsored by, or approved by UPRIGHT or any related company.
+      "Upright GO" is used only to identify compatibility with original Upright GO 1 hardware.</p>
+    <p>This app is not a medical device. Features are posture reminders and vibration
+      feedback, not medical treatment.</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  // Deterministic day of posture — the same generator family the mocks used.
+  function mulberry32(a) { return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }; }
+  const rng = mulberry32(0x5eed);
+  const ribbon = document.getElementById('ribbon');
+  const segs = [];
+  let i = 0;
+  while (i < 96) {
+    if (i === 30 || i === 31) { segs.push('n'); i++; continue; } // lunch gap
+    if (rng() < 0.14) { segs.push('s'); i++; continue; }
+    segs.push('u'); i++;
+  }
+  for (let k = segs.length - 1; k >= 88; k--) segs[k] = 'n'; // after "now"
+  const frag = document.createDocumentFragment();
+  for (const c of segs) {
+    const d = document.createElement('div');
+    d.className = 'seg ' + c;
+    frag.appendChild(d);
+  }
+  ribbon.insertBefore(frag, ribbon.firstChild);
+})();
+</script>
+
+</body>
+</html>

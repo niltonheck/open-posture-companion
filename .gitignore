@@ -55,3 +55,6 @@ app-example
 /AGENTS.md
 /.claude
 /assets/brand
+
+# review video working files — published as release assets, not repo blobs
+/store/review

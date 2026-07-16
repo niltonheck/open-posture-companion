@@ -4,6 +4,8 @@ An independent, open-source companion app for the discontinued **Upright GO 1** 
 
 Built with Expo (SDK 55) and React Native, on top of a community [reverse-engineered BLE protocol](https://github.com/niltonheck/upright-go-1-reverse-engineering).
 
+**[Download on the App Store](https://apps.apple.com/us/app/open-posture-companion/id6788418635)** (iOS).
+
 > This is an independent open-source interoperability project. It is not affiliated with, endorsed by, sponsored by, or approved by UPRIGHT or any related company. "Upright GO" is used only to identify compatibility with original Upright GO 1 hardware. **This app is not a medical device.**
 
 <p align="center">
@@ -102,7 +104,7 @@ Once the dev client is installed, JS iteration only needs `expo start` — the p
 
 **No hardware? Use demo mode.** In the app: About → tap the version line five times → scan → connect to the simulated device. The whole BLE pipeline runs against a scripted transport, so every screen has realistic data to develop against.
 
-**Status:** iOS is the validated platform; Android configuration is in place but on-device verification is pending.
+**Status:** iOS is the validated platform and is [available on the App Store](https://apps.apple.com/us/app/open-posture-companion/id6788418635); Android configuration is in place but on-device verification is pending.
 
 ## Contributing
 

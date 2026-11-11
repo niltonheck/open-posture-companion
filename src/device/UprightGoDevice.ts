@@ -18,7 +18,7 @@ import {
   SERVICE_BY_CHARACTERISTIC,
   Telemetry,
 } from './characteristics';
-import { base64ToBytes, bytesToBase64, bytesToHex } from './encoding';
+import { base64ToBytes, bytesToBase64, bytesToHex, toInt16 } from './encoding';
 import type {
   DeviceConnectionState,
   DeviceOdometer,
@@ -583,8 +583,9 @@ export class UprightGoDevice {
 
   /**
    * Subscribe to posture status derived from the aaca tilt stream — a
-   * continuous uint16 LE value in tenths of a degree (~200 upright → ~800
-   * near-horizontal, hardware-confirmed 2026-07-03; docs/protocol.html).
+   * continuous int16 LE value in tenths of a degree (~200 upright → ~800
+   * near-horizontal, hardware-confirmed 2026-07-03; docs/protocol.html;
+   * negative when tilted back past vertical).
    * The stream is absolute, so there is no meaningful threshold until a
    * calibration reference exists — captured when the user calibrates, or
    * adopted from the device's stored record when it connects already
@@ -642,7 +643,7 @@ export class UprightGoDevice {
         if (bytes.length < 2) {
           return;
         }
-        const tilt = bytes[0] | (bytes[1] << 8);
+        const tilt = toInt16(bytes[0] | (bytes[1] << 8));
         if (__DEV__) {
           console.log(`${TAG} aaca payload: ${bytesToHex(bytes)} (tilt=${tilt})`);
         }
@@ -707,7 +708,7 @@ export class UprightGoDevice {
       if (record.length < 2) {
         return;
       }
-      this.referenceTiltDecidegrees = (record[0] << 8) | record[1];
+      this.referenceTiltDecidegrees = toInt16((record[0] << 8) | record[1]);
       if (__DEV__) {
         console.log(
           `${TAG} adopted device calibration: baseline=${this.referenceTiltDecidegrees}`,

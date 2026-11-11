@@ -47,6 +47,11 @@ export function base64ToBytes(base64: string): Uint8Array {
   return bytes;
 }
 
+/** Reinterpret a 16-bit value as two's-complement signed, e.g. 0xfff7 → -9. */
+export function toInt16(value: number): number {
+  return (value << 16) >> 16;
+}
+
 /** Hex dump for logging raw payloads, e.g. "02 00 1a". */
 export function bytesToHex(bytes: Uint8Array): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ');

@@ -25,7 +25,7 @@ export const Characteristic = {
   calibrationState: fullUUID('aab2'),
   /**
    * Read: stored calibration record, NOT a live angle (GAP-01 resolved
-   * 2026-07-03): two uint16 BIG-endian values in tenths of a degree,
+   * 2026-07-03): two int16 BIG-endian values in tenths of a degree,
    * [baseline][vibration threshold], threshold = baseline + 120 (+12°).
    * Persists in flash across power cycles — stale unless calibrationState
    * reads calibrated. Note: opposite endianness from the aaca stream.
@@ -49,11 +49,12 @@ export const Characteristic = {
    */
   pauseMode: fullUUID('aac7'),
   /**
-   * Notify/Read: continuous uint16 LE forward-tilt stream in tenths of a
+   * Notify/Read: continuous int16 LE forward-tilt stream in tenths of a
    * degree, NOT the discrete status byte the original docs claimed (GAP-02).
    * Confirmed 2026-07-03 with correct mounting: ~200 upright → ~800
-   * near-horizontal, monotonic; ~898 unworn/dangling. Absolute values
-   * (pre-calibration at least). A "0x02 = slouching" status, if real,
+   * near-horizontal, monotonic; ~898 unworn/dangling. Signed: tilting back
+   * past vertical reads negative (f7 ff = -9, observed 2026-11-11). Absolute
+   * values (pre-calibration at least). A "0x02 = slouching" status, if real,
    * likely belongs to another notify characteristic (aac4/aac9 — 5.2).
    */
   posture: fullUUID('aaca'),
